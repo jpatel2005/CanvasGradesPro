@@ -43,7 +43,7 @@
 I'm constantly looking to enhance this extension and would love your input! If you have suggestions for new features, please take a moment to fill out this [Google Form](https://docs.google.com/forms/d/e/1FAIpQLSdjEcsXiOFBt0HN6t7ra3wvjiaJJREMW35u_u3CsmOzR3aaKA/viewform) and vote on the features you'd like to see in the future. 
 Your feedback is invaluable in making this extension even better!
 <br><br>
-If you have any feature suggestions or improvements that can be made to the extension, please [create an issue](https://github.com/NerdyGamer05/CanvasGradesPro/issues/new) so that I can hear your idea.
+If you have any feature suggestions or improvements that can be made to the extension, please [create an issue](https://github.com/jpatel2005/CanvasGradesPro/issues/new) so that I can hear your idea.
 
 ### Known Bugs / Issues + Things I'm Working On:
 - Issues
@@ -53,5 +53,5 @@ If you have any feature suggestions or improvements that can be made to the exte
 
 ## Final Notes
 
-If you are facing any issues with the extension, please [create an issue](https://github.com/NerdyGamer05/CanvasGradesPro/issues/new).<br><br>
+If you are facing any issues with the extension, please [create an issue](https://github.com/jpatel2005/CanvasGradesPro/issues/new).<br><br>
 If you are enjoying your experience with CanvasGradesPro, consider ⭐ **leaving a review**  and/or **starring this repository** ⭐

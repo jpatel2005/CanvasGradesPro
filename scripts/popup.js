@@ -214,7 +214,7 @@ fontStyleDropdown.addEventListener('change', async () => await updateGradeOverla
 gradesPageShowGradingStandard.addEventListener('input', clearSaveMessage);
 gradesPageShowClassStats.addEventListener('input', clearSaveMessage);
 gradesPageShowDrops.addEventListener('input', clearSaveMessage);
-linksContainer.firstElementChild.addEventListener('click', () => chrome.tabs.create({ url: 'https://github.com/NerdyGamer05/CanvasGradesPro/issues' }));
+linksContainer.firstElementChild.addEventListener('click', () => chrome.tabs.create({ url: 'https://github.com/jpatel2005/CanvasGradesPro/issues' }));
 linksContainer.lastElementChild.addEventListener('click', () => chrome.tabs.create({ url: 'https://forms.gle/CVf8hfLLBRYCzLhp7' }));
 syncNowButton.addEventListener('click', async () => {
   if (!syncSettingsDownload.checked && !syncSettingsUpload.checked) {
