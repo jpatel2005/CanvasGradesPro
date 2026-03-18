@@ -87,20 +87,23 @@ const default_gpa_standard = {
 
 /**
  * Function for finding the variance of an array of letter grades
- * Used for finding the most "realistic" min gpa combinations (uses the )
+ * Uses the formula: Var(X) = (1/n) * sum of (x_i - u)^2 = [(1/n) * sum of (x_i)^2] - [(1/n) * sum of x_i]^2 
+ * Used for finding the most "realistic" min gpa combinations
  */
 const findVariance = function(gpaStandard, grades) {
   const n = grades.length;
+  if (n === 0) {
+    return 0;
+  }
   let sum = 0;
-  for (const grade of grades) {
-    sum += Number(gpaStandard[grade]);
+  let sumOfSquares = 0;
+  for (let i = 0; i < n; i++) {
+    const val = Number(gpaStandard[grades[i]]);
+    sum += val;
+    sumOfSquares += (val*val);
   }
-  const averageGrade = sum / n;
-  let varianceSum = 0;
-  for (const grade of grades) {
-    varianceSum += Math.pow((Number(gpaStandard[grade]) - averageGrade), 2);
-  }
-  return varianceSum / n;
+  const mean = sum / n;
+  return (sumOfSquares / n) - (mean * mean);
 }
 
 // Determine adjusted drop values, if necessary
@@ -117,15 +120,15 @@ const validateDropCounts = function(lowDrops, highDrops, totalAssignments) {
 }
 
 /**
- * TODO Investigate to see if there is a faster way to do this (attempt to avoid duplicate removal at the end)
- * Function for calculating possible combinations for your desired minimum gp
+ * Function for calculating possible combinations for your desired minimum gpa
+ * Queue-based approach with duplicate prevention
  * gpaStandard: Letter grade to gpa points mapping
  * courseCredits: Array of credits (will be sorted in the function for a standard return format)
  * gpaRequired: Numeric value representing the gpa required for the current semester
 */
 const getMinGpaCombinations = function(gpaStandard, courseCredits, gpaRequired) {
   courseCredits.sort((a,b) => b-a);
-  const sortedGpaStandard = Object.keys(gpaStandard).sort((a,b) => {
+  const sortedGpaStandard = Object.keys(gpaStandard).sort((a, b) => {
     // If the GPA's associated with the two current letter grades are not equal, then compare them
     if (gpaStandard[a] !== gpaStandard[b]) {
       return gpaStandard[b] - gpaStandard[a];
@@ -143,95 +146,78 @@ const getMinGpaCombinations = function(gpaStandard, courseCredits, gpaRequired) 
     }
     gpaStandardKeys.push(sortedGpaStandard[i]);
   }
-  const totalCredits = courseCredits.reduce((a,b) => a + b, 0);
-  const maxGpa = gpaStandard[gpaStandardKeys[0]];
+  // Convert GPAs to integers (x100) to minimize floating point bugs
+  const gpaScaled = {};
+  for (const key of gpaStandardKeys) {
+    gpaScaled[key] = Math.round(100 * gpaStandard[key]); 
+  }
+  const requiredGpaScaled = Math.round(100 * gpaRequired);
+  const maxGpaScaled = gpaScaled[gpaStandardKeys[0]];
+  const totalCredits = courseCredits.reduce((a,b) => a+b, 0);
   // Determine the maximum error that will allowed
   // This will fail in the following case:
   // The max gpa cannot be obtained by simply by getting the highest grade in all your courses (e.g. honors and AP courses)
-  const maxError = totalCredits * (maxGpa - gpaRequired); 
+  const maxErrorScaled = totalCredits * (maxGpaScaled - requiredGpaScaled);
   // Keep track of the maximum error difference allowed
-  let maxErrorDiff = 1;
-  let queue = null;
+  let maxErrorDiffScaled = 100;
+  let validResults = null;
   while (true) {
     // Don't add something to the queue if it will fail when processed (do some preprocessing to minimize memory usage and improve performance)
-    // Max queue size may be m^n, where "m" is the number of letter grades and "n" is the number of courses that you are taking
-    queue = [[0,{}]]; // format: [ current_error, {credits : [letter_grades] } ]
-    for (let j = 0; j < courseCredits.length; j++) {
-      const credits = courseCredits[j];
-      // Only process the elements in the queue that were here at the beginning of this iteration
-      const n = queue.length;
-      for (let i = 0; i < n; i++) {
-        const curr = queue[i];
-        for (const letterGrade of gpaStandardKeys) {
-          const currError = credits * (maxGpa - gpaStandard[letterGrade]);
+    let queue = [[0,[]]]; // format: [ current_error_scaled, array_of_letter_grades ]
+    for (let i = 0; i < courseCredits.length; i++) {
+      const credits = courseCredits[i];
+      // Build new queue as you go (avoid slow removal and high memory usage)
+      const nextQueue = [];
+      // Check if the current course has the same credits as the previous one
+      const isSameCreditsAsPrev = i > 0 && courseCredits[i] === courseCredits[i-1];
+      for (let j = 0; j < queue.length; j++) {
+        const currError = queue[j][0];
+        const currGrades = queue[j][1];
+        // If same credit, start at grade index of the previous course
+        // Can avoid generating duplicate permutations with this approach
+        let startGradeIdx = 0;
+        if (isSameCreditsAsPrev) {
+          const prevGrade = currGrades[i-1];
+          startGradeIdx = gpaStandardKeys.indexOf(prevGrade);
+        }
+        for (let k = startGradeIdx; k < gpaStandardKeys.length; k++) {
+          const letterGrade = gpaStandardKeys[k];
+          const deltaError = credits * (maxGpaScaled - gpaScaled[letterGrade]);
+          const newError = currError + deltaError;
           // Check if the error is too large (if so, then don't add to the queue)
-          // If this is the final error check, then check to make sure that the error as close as possible to the maximum error
-          if (curr[0] + currError > maxError || (j === courseCredits.length - 1 && maxError - (curr[0] + currError) >= maxErrorDiff)) {
+          if (newError > maxErrorScaled) {
             break;
           }
-          const copy = JSON.parse(JSON.stringify(curr[1]));
-          // Add letter grade to the list of grades associated with the current credit count
-          if (copy[credits] === undefined) {
-            copy[credits] = [];
+          // If this is the final error check, then check to make sure that the error as close as possible to the maximum error 
+          // Check if error is too small (GPA too high)
+          if (i === courseCredits.length-1 && maxErrorScaled - newError >= maxErrorDiffScaled) {
+            continue; 
           }
-          copy[credits].push(letterGrade);
-          queue.push([curr[0] + currError, copy]);
+          // Push the new state to the queue (should be permutation-free)
+          nextQueue.push([newError, [...currGrades, letterGrade]]);
         }
       }
-      // TODO Consider using splice() for the queue instead of slice() w/ re-assignment
-      // Remove the processed items from the queue
-      queue = queue.slice(n);
+      queue = nextQueue;
     }
-    // Sort by the error then map to an array of letter grades (maps directly to the sorted credits array)
-    const results = queue.map(elm => {
-      // Get credits in a consist format (used for duplication removal later)
-      const keys = Object.keys(elm[1]).sort((a,b) => b-a);
-      const curr = [];
-      for (const key of keys) {
-        const tmp = elm[1][key].sort((a,b) => {
-          // If the GPA's associated with the two current letter grades are not equal, then compare them
-          if (gpaStandard[a] !== gpaStandard[b]) {
-            return gpaStandard[b] - gpaStandard[a];
-          }
-          // If they are equal, then compare the letter grade representations (while considering plus and minus signs)
-          return (b + ',').localeCompare(a + ',');
-        });
-        // Add letter grades in sorted order (used for duplication removal later)
-        curr.push(...tmp);
-      }
-      return curr;
-    });
-    // Use set for keeping track of duplicates (memory goes crazy)
-    const seen = new Set();
-    const uniqueRes = [];
-    for (const data of results) {
-      // Convert to string for set detection (and addition)
-      const s = data.toString(); 
-      if (seen.has(s)) {
-        continue;
-      }
-      // If data is unique, then add to set and final result
-      seen.add(s);
-      uniqueRes.push(data);
-    }
+    validResults = queue;
     // If the number is results is at least 10 or if we have tried this enough times, then return the results
-    if (uniqueRes.length >= 10 || maxErrorDiff > maxGpa * courseCredits.length) { 
-      uniqueRes.sort((a,b) => findVariance(gpaStandard, a) - findVariance(gpaStandard, b));
-      // Limit response to 50 elements
-      // Convert each element to an object that maps credits to an array of grades
-      return uniqueRes.slice(0,50)
-      .map(result => 
-        result.reduce((acc, grade, index) => {
-          if (acc[courseCredits[index]] === undefined) {
-            acc[courseCredits[index]] = [];
+    if (validResults.length >= 10 || maxErrorDiffScaled > (maxGpaScaled * courseCredits.length)) {
+      validResults.sort((a,b) => findVariance(gpaStandard, a[1]) - findVariance(gpaStandard, b[1]));
+      return validResults.slice(0, 50).map(result => {
+        const grades = result[1];
+        // Unflatten the array; convert to object format
+        return grades.reduce((acc, grade, idx) => {
+          const credits = courseCredits[idx];
+          if (acc[credits] === undefined) {
+            acc[credits] = [];
           }
-          acc[courseCredits[index]].push(grade);
+          acc[credits].push(grade);
           return acc;
-        }, {})
-      );
+        }, {});
+      });
     }
     // Increment the error (to allow more grades to satisfy the given conditions)
-    maxErrorDiff += 0.5;
+    maxErrorDiffScaled += 50;
   }
 }
 const applyCustomFont = async function(font) {
