@@ -15,5 +15,10 @@
       "matches": ["<all_urls>"]
     }
   ],
-  "permissions": ["storage","unlimitedStorage"]
+  "permissions": ["storage","unlimitedStorage"],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "{8323d93c-4613-4f7b-946f-a842dc567a9d}"
+    }
+  }
 }
