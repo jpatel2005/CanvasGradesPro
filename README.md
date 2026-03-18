@@ -47,9 +47,9 @@ If you have any feature suggestions or improvements that can be made to the exte
 
 ### Known Bugs / Issues + Things I'm Working On:
 - Issues
-  - Non-optimal performance for initial GPA card calculations (could be made faster)
+  - N/A
 - Working On:
-  - Nothing currently
+  - N/A
 
 ## Final Notes
 
