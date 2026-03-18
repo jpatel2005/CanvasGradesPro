@@ -103,6 +103,19 @@ const findVariance = function(gpaStandard, grades) {
   return varianceSum / n;
 }
 
+// Determine adjusted drop values, if necessary
+// Low drops take priority over high drops (e.g. 2 assignments, 1 low & 1 high drop -> low drop will be applied, high drop will not)
+const validateDropCounts = function(lowDrops, highDrops, totalAssignments) {
+  // Check if adjustment is necessary
+  if (lowDrops + highDrops < totalAssignments) {
+    return [lowDrops, highDrops];
+  }
+  // Drops must leave at least one assignment remaining
+  const newLowDrops = Math.max(Math.min(lowDrops, totalAssignments-1), 0);
+  const newHighDrops = Math.max(Math.min(highDrops, totalAssignments-1-newLowDrops), 0);
+  return [newLowDrops, newHighDrops];
+}
+
 /**
  * TODO Investigate to see if there is a faster way to do this (attempt to avoid duplicate removal at the end)
  * Function for calculating possible combinations for your desired minimum gp
@@ -3469,8 +3482,9 @@ if (document.title === 'Dashboard') {
         }
         // Attempt to perform drops here
         for (const group of courseAssignments) {
-          const lowDrops = config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0;
-          const highDrops = config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0;
+          const totalAssignments = map[group.name].grades.length;
+          // Check if the number of drops is illegal (>= total assignments) and make adjustments accordingly
+          const [lowDrops, highDrops] = validateDropCounts(config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0, config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0, totalAssignments);
           // If there are no drops to be done, then no further processing is necessary
           if (lowDrops === 0 && highDrops === 0) {
             continue;
@@ -3493,7 +3507,7 @@ if (document.title === 'Dashboard') {
           const neverDrop = new Set(group.rules.never_drop ?? []);
           // Perform the low drops
           for (let i = 0; i < lowDrops; i++) {
-            if (map[group.name].grades.length === 0) {
+            if (totalAssignments === 0) {
               break;
             }
             const assignment = map[group.name].grades[0];
@@ -3511,10 +3525,10 @@ if (document.title === 'Dashboard') {
           }
           // Perform the high drops
           for (let i = 0; i < highDrops; i++) {
-            if (map[group.name].grades.length === 0) {
+            if (totalAssignments === 0) {
               break;
             }
-            const assignment = map[group.name].grades[map[group.name].grades.length-1];
+            const assignment = map[group.name].grades[totalAssignments-1];
             // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
             if (neverDrop.has(assignment.id)) {
               map[group.name].grades.pop();
@@ -3940,8 +3954,10 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
     document.querySelectorAll('#grades_summary .dropped').forEach(assignment => assignment.classList.remove('dropped'));
     // Attempt to perform drops here (also update UI for dropped assignments)
     for (const group of groups) {
-      const lowDrops = config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0;
-      const highDrops = config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0;
+      const totalAssignments = map[group.name].grades.length;
+      // Check if the number of drops is illegal (>= total assignments) and make adjustments accordingly
+      const [lowDrops, highDrops] = validateDropCounts(config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0, config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0, totalAssignments);
+      // If there are no drops to be done, then no further processing is necessary
       if (lowDrops === 0 && highDrops === 0) {
         continue;
       }
@@ -3955,7 +3971,7 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
       const neverDrop = new Set(group.rules.never_drop ?? []);
       // Perform the low drops
       for (let i = 0; i < lowDrops; i++) {
-        if (map[group.name].grades.length === 0) {
+        if (totalAssignments === 0) {
           break;
         }
         const assignment = map[group.name].grades[0];
@@ -3978,10 +3994,10 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
       }
       // Perform the high drops
       for (let i = 0; i < highDrops; i++) {
-        if (map[group.name].grades.length === 0) {
+        if (totalAssignments === 0) {
           break;
         }
-        const assignment = map[group.name].grades[map[group.name].grades.length-1];
+        const assignment = map[group.name].grades[totalAssignments-1];
         // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
         if (neverDrop.has(assignment.id)) {
           map[group.name].grades.pop();

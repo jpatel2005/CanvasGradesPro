@@ -1,6 +1,6 @@
 config*
 *.txt
 .vscode/
-old.js
+test.js
 tests/*
 *.zip
