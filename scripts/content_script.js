@@ -3724,8 +3724,6 @@ if (document.title === 'Dashboard') {
     minScoreButton.style.border = 'none';
     minScoreButton.style.outline = 'none';
     minScoreButton.style.fontSize = '1.2em';
-    minScoreButton.style.position = 'absolute';
-    minScoreButton.style.transform = 'translate(-530%, 20%)';
     minScoreButton.appendChild(minScoreIcon);
     // Apply the mutation observer to all of the assignment grade cells and add min grade buttons
     const assignmentGradeCells = document.getElementById('grades_summary').querySelectorAll('tbody tr:not(.hard_coded) span.grade');
@@ -3734,20 +3732,22 @@ if (document.title === 'Dashboard') {
       const minScoreElm = minScoreButton.cloneNode(true);
       minScoreElm.addEventListener('click', togglePopup);
       cell.appendChild(minScoreElm);
+      cell.style.textAlign = 'center';
+      cell.style.verticalAlign = 'middle';
+      cell.style.paddingLeft = 0;
       observer.observe(gradeCell, {
         childList: true
       });
     }
     if (assignmentGradeCells.length !== 0) {
       const detailsHeaderText = document.createElement('p');
-      detailsHeaderText.innerHTML = 'Min Score for Desired Grade';
+      detailsHeaderText.innerHTML = 'Min Score for<br>Desired Grade';
       detailsHeaderText.style.fontSize = '.7em';
       detailsHeaderText.style.fontWeight = 550;
-      detailsHeaderText.style.marginLeft = '2.4em';
       detailsHeaderText.style.textAlign = 'center';
-      detailsHeaderText.style.width = '7em';
-      detailsHeaderText.style.transform = 'translateX(-90%)';
-      document.getElementById('grades_summary').querySelector('thead .assignment_score').nextElementSibling.appendChild(detailsHeaderText);
+      const detailsHeader = document.getElementById('grades_summary').querySelector('thead .assignment_score').nextElementSibling;
+      detailsHeader.appendChild(detailsHeaderText);
+      detailsHeader.style.paddingLeft = 0;
     }
     calculateButton.addEventListener('click', calculateMinGrade);
     desiredGradeInput.addEventListener('keydown', event => {
