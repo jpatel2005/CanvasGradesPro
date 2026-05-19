@@ -637,7 +637,7 @@ if (document.title === 'Dashboard') {
     document.head.appendChild(customStyling);
     // Create a template toggle switch element
     const toggleSwitch = document.createElement('div');
-    toggleSwitch.classList.add('switch-container');
+    toggleSwitch.classList.add('canvas-grades-pro', 'switch-container');
     const toggleSwitchLabel = document.createElement('label');
     toggleSwitchLabel.classList.add('switch');
     const toggleSwitchInput = document.createElement('input');
@@ -941,8 +941,10 @@ if (document.title === 'Dashboard') {
     popupNotes.style.margin = '-5px 0 0';
     popupContainer.classList.add('container-canvas-grades-pro');
     saveChangesButton.id = 'popup-save-changes';
+    saveChangesButton.classList.add('canvas-grades-pro');
     saveChangesButton.textContent = 'Save Changes!';
     saveChangesLabel.id = 'popup-save-changes-label';
+    saveChangesLabel.classList.add('canvas-grades-pro');
     saveChangesLabel.text = '\u200b';
 
     // Create semesters dropdown (will be cloned later rather than re-created)
@@ -1004,6 +1006,7 @@ if (document.title === 'Dashboard') {
     const addRowText = document.createElement('span');
     const addRowButton = document.createElement('i');
     missingSaveChangesLabel.id = 'popup-missing-save-changes-label';
+    missingSaveChangesLabel.classList.add('canvas-grades-pro');
     missingSaveChangesLabel.text = '\u200b';
     addRowText.textContent = 'ADD ROW';
     addRowButton.classList.add('fas', 'fa-plus');
@@ -1290,6 +1293,7 @@ if (document.title === 'Dashboard') {
     // Create and configure the table for the gpa standard (use config.default_gpa_standard)
     const gpaStandardTable = document.createElement('table');
     gpaStandardTable.id = 'gpa-standard-table';
+    gpaStandardTable.classList.add('canvas-grades-pro');
     const gpaStandardHead = document.createElement('thead');
     const gpaStandardHeadRow = document.createElement('tr');
     for (const col of ['Grade', 'GPA']) {
@@ -1321,13 +1325,16 @@ if (document.title === 'Dashboard') {
     gpaStandardInput.placeholder = 'A 4\nA- 3.7\nB+ 3.3\nB 3\nB- 2.7'
     gpaStandardInput.style.display = 'none';
     gpaStandardInput.id = 'gpa-standard-input';
+    gpaStandardInput.classList.add('canvas-grades-pro');
     const gpaStandardInputMessage = document.createElement('div');
     gpaStandardInputMessage.id = 'gpa-standard-input-message';
+    gpaStandardInputMessage.classList.add('canvas-grades-pro');
     const gpaStandardButton = document.createElement('i');    
     gpaStandardButton.id = 'gpa-standard-button';
-    gpaStandardButton.classList.add('fas', 'fa-edit');
+    gpaStandardButton.classList.add('fas', 'fa-edit', 'canvas-grades-pro');
     const gpaStandardButtonContainer = document.createElement('div');
     gpaStandardButtonContainer.id = 'gpa-standard-button-container';
+    gpaStandardButtonContainer.classList.add('canvas-grades-pro');
     const gpaStandardButtonLabel = document.createElement('div');
     gpaStandardButtonLabel.textContent = 'Edit GPA Standard';
     // Add gpa standard elements to the popup
@@ -1494,13 +1501,16 @@ if (document.title === 'Dashboard') {
     const minGpaRequired = document.createElement('span');
     minGpaRequired.textContent = '\u200b';
     minGpaContainer.id = 'min-gpa-container';
+    minGpaContainer.classList.add('canvas-grades-pro');
     const minGpaLeftSubContainer = document.createElement('div');
     const minGpaRightSubContainer = document.createElement('div');
     const minGpaMessage = document.createElement('div');
     minGpaMessage.id = 'min-gpa-message';
+    minGpaMessage.classList.add('canvas-grades-pro');
     minGpaMessage.textContent = '\u200b';
     const minGpaCalculateBtn = document.createElement('button');
     minGpaCalculateBtn.id = 'min-gpa-calculate-btn';
+    minGpaCalculateBtn.classList.add('canvas-grades-pro');
     minGpaCalculateBtn.textContent = 'Calculate!';
     // Add gpa standard elements to the popup
     minGpaContent.appendChild(minGpaTitle);
@@ -1594,6 +1604,7 @@ if (document.title === 'Dashboard') {
       const uniqueCourseCredits = [...new Set(totalCurrentTermCredits)].sort((a,b) => b-a);
       const minGpaTable = document.createElement('table');
       minGpaTable.id = 'min-gpa-table';
+      minGpaTable.classList.add('canvas-grades-pro');
       // Create and configure the main column (credits)
       const minGpaTableRow = document.createElement('tr');
       const minGpaTableCredits = document.createElement('th');
@@ -1646,6 +1657,7 @@ if (document.title === 'Dashboard') {
       } else {
         const minGpaTableContainer = document.createElement('div');
         minGpaTableContainer.id = 'min-gpa-table-container';
+        minGpaTableContainer.classList.add('canvas-grades-pro');
         minGpaTableContainer.appendChild(tableDesc);
         minGpaTableContainer.appendChild(minGpaTable);
         minGpaContent.appendChild(minGpaTableContainer);
@@ -3293,6 +3305,7 @@ if (document.title === 'Dashboard') {
     popupSubtitle.textContent = '\u200b';
     popupContainer.classList.add('container-canvas-grades-pro');
     desiredGradeContainer.id = 'desired-grade';
+    desiredGradeContainer.classList.add('canvas-grades-pro');
     desiredGradeTitle.textContent = 'Desired Grade';
     desiredGradeInput.type = 'text';
     desiredGradeInput.placeholder = '0-100 OR letter grade';
@@ -3300,15 +3313,20 @@ if (document.title === 'Dashboard') {
     desiredGradeInput.autocomplete = false;
     desiredGradeInput.maxLength = 6;
     desiredGradeErrorMessage.id = 'popup-error-message';
+    desiredGradeErrorMessage.classList.add('canvas-grades-pro');
     desiredGradeWarningMessage.id = 'popup-warning-message';
+    desiredGradeWarningMessage.classList.add('canvas-grades-pro');
     minGradeContainer.id = 'minimum-grade';
+    minGradeContainer.classList.add('canvas-grades-pro');
     minGradeContainer.classList.add('hide-grades');
     minGradeTitle.textContent = 'Minimum Grade Required';
     minGradeScore.id = 'minimum-grade-score';
     minGradeDivider.id = 'minimum-grade-divider';
+    minGradeDivider.classList.add('canvas-grades-pro');
     minGradeDivider.innerHTML = '&#8596;';
     minGradePercentage.id = 'minimum-grade-percentage';
     calculateButton.id = 'popup-save-changes';
+    calculateButton.classList.add('canvas-grades-pro');
     calculateButton.textContent = 'Calculate!';
 
     desiredGradeContainer.appendChild(desiredGradeTitle);

@@ -50,55 +50,55 @@
     overflow-y: scroll;
 }
 
-.popup-canvas-grades-pro .content:has(#min-gpa-container) {
+.popup-canvas-grades-pro .content:has(.canvas-grades-pro#min-gpa-container) {
     width: fit-content;
     height: fit-content;
     padding: 0 20px;
 }
 
-.popup-canvas-grades-pro #min-gpa-table {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-table {
     width: 100%;
     border-collapse: collapse;
     margin: 0;
 }
 
-.popup-canvas-grades-pro #min-gpa-table .cell-divider {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-table .cell-divider {
     border-right-width: .125rem !important;
     border-right-color: #5E35B1 !important;
 }
 
-.popup-canvas-grades-pro #min-gpa-table .cell-subdivider {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-table .cell-subdivider {
     border-right-width: 2px !important;
 }
 
-.popup-canvas-grades-pro #min-gpa-table-container {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-table-container {
     padding: 10px;
     padding-top: 5px;
     margin: 0 -10px;
 }
 
-.popup-canvas-grades-pro #min-gpa-table tr:first-of-type {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-table tr:first-of-type {
     background-color: #5E35B1 !important;
     color: white;
 }
 
-.popup-canvas-grades-pro #min-gpa-table tr:nth-of-type(2) {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-table tr:nth-of-type(2) {
     background-color: #B39DDB !important;
     font-weight: bold;
     color: black;
 }
 
-.popup-canvas-grades-pro #min-gpa-table th, .popup-canvas-grades-pro #min-gpa-table td {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-table th, .popup-canvas-grades-pro .canvas-grades-pro#min-gpa-table td {
     padding: 4px;
     text-align: center;
     border: 1px solid #ddd;
 }
 
-.popup-canvas-grades-pro #min-gpa-table tr:nth-child(even) {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-table tr:nth-child(even) {
     background-color: #f2f2f2;
 }
 
-.popup-canvas-grades-pro #min-gpa-table tr:not(:nth-child(-n+2)):hover {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-table tr:not(:nth-child(-n+2)):hover {
     background-color: #EDE7F6;
 }
 
@@ -171,7 +171,7 @@
     justify-items: center;
 } 
 
-#popup-error-message {
+.canvas-grades-pro#popup-error-message {
     font-size: .75em;
     color: red;
     position: absolute;
@@ -181,7 +181,7 @@
     display: none;
 }
 
-#popup-warning-message {
+.canvas-grades-pro#popup-warning-message {
     font-size: .6em;
     position: absolute;
     bottom: 2px;
@@ -191,48 +191,48 @@
     white-space: pre-line;
 }
 
-#desired-grade input {
+.canvas-grades-pro#desired-grade input {
     width: 85%;
     margin-top: 11px;
     margin-bottom: 0;
 }
 
-#minimum-grade h5 {
+.canvas-grades-pro#minimum-grade h5 {
     transform: translateY(-11.85px);
     margin-bottom: 10px;
 }
 
-#minimum-grade span {
+.canvas-grades-pro#minimum-grade span {
     font-size: .925em;
     font-weight: 500;
     transform: translateY(-5px);
 }
 
-#minimum-grade.hide-grades span {
+.canvas-grades-pro#minimum-grade.hide-grades span {
     visibility: hidden;
 }
 
-#minimum-grade-divider {
+.canvas-grades-pro#minimum-grade-divider {
     margin: 0 10px;
     font-weight: 700 !important;
 }
 
-#popup-save-changes-label, #popup-missing-save-changes-label {
+.canvas-grades-pro#popup-save-changes-label, .canvas-grades-pro#popup-missing-save-changes-label {
     font-size: .9em;
     margin: -12px 10px -12px;
     font-weight: 500;
     font-style: italic;
 }
 
-#popup-missing-save-changes-label {
+.canvas-grades-pro#popup-missing-save-changes-label {
     margin: 4px 10px -12px;
 }
 
-#popup-save-changes-label.error, #popup-missing-save-changes-label.error {
+.canvas-grades-pro#popup-save-changes-label.error, .canvas-grades-pro#popup-missing-save-changes-label.error {
     color: red;
 }
 
-#popup-save-changes {
+.canvas-grades-pro#popup-save-changes {
     background-color: #1c81bc;
     color: white;
     border-radius: 8px;
@@ -266,7 +266,7 @@
     transform: translate(-50%,-50%) scale(1);
 }
 
-.popup-canvas-grades-pro.active #gpa-standard-input {
+.popup-canvas-grades-pro.active .canvas-grades-pro#gpa-standard-input {
     width: 75%;
     resize: vertical;
     height: 18.5rem;
@@ -274,19 +274,19 @@
     margin-bottom: 0;
 }
 
-.popup-canvas-grades-pro.active #gpa-standard-input-message {
+.popup-canvas-grades-pro.active .canvas-grades-pro#gpa-standard-input-message {
     margin-bottom: -.45rem;
     font-size: 1.1rem;
     color: red;
     display: none;
 }
 
-.popup-canvas-grades-pro.active .content:has(#gpa-standard-input) {
+.popup-canvas-grades-pro.active .content:has(.canvas-grades-pro#gpa-standard-input) {
     height: fit-content;
     width: 400px;
 }
 
-.popup-canvas-grades-pro #min-gpa-container input {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-container input {
     width: 80%;
     background-color: #fff;
     border: 1px solid #ccc;
@@ -303,23 +303,23 @@
     text-align: center;
 }
 
-.popup-canvas-grades-pro #min-gpa-container > :last-child > h5 {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-container > :last-child > h5 {
     margin-top: -8px;
 }
 
-.popup-canvas-grades-pro #min-gpa-container > :last-child > span {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-container > :last-child > span {
     display: inline-block;
     transform: translateY(6px);
 }
 
-.popup-canvas-grades-pro #min-gpa-message {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-message {
     color: red;
     font-weight: bold;
     font-size: .775rem;
     margin-top: 8px;
 }
 
-.popup-canvas-grades-pro #min-gpa-calculate-btn {
+.popup-canvas-grades-pro .canvas-grades-pro#min-gpa-calculate-btn {
     background-color: #1c81bc;
     color: white;
     border-radius: 8px;
@@ -328,46 +328,42 @@
     margin-bottom: 10px;
 }
 
-#gpa-standard-table {
+.canvas-grades-pro#gpa-standard-table {
     width: 80%;
     margin: 0 auto;
     border-collapse: collapse;
     font-family: Arial, sans-serif;
 }
 
-#gpa-standard-table thead {
+.canvas-grades-pro#gpa-standard-table thead {
     background-color: #096FA3;
     color: white;
 }
 
-#gpa-standard-table th, #gpa-standard-table td {
+.canvas-grades-pro#gpa-standard-table th, .canvas-grades-pro#gpa-standard-table td {
     padding: 4px;
     text-align: center;
     border: 1px solid #ddd;
 }
 
-#gpa-standard-table tbody tr:nth-child(even) {
+.canvas-grades-pro#gpa-standard-table tbody tr:nth-child(even) {
     background-color: #f2f2f2;
 }
 
-#gpa-standard-table tbody tr:hover {
+.canvas-grades-pro#gpa-standard-table tbody tr:hover {
     background-color: #cfe2ff;
 }
 
-#gpa-standard-table th {
+.canvas-grades-pro#gpa-standard-table th {
     font-weight: bold;
     font-size: 1rem;
 }
 
-#gpa-standard-table td {
+.canvas-grades-pro#gpa-standard-table td {
     font-size: .8rem;
 }
 
-#gpa-standard-edit {
-    margin: 10px 0;
-}
-
-#gpa-standard-button-container {
+.canvas-grades-pro#gpa-standard-button-container {
     display: flex;
     flex-direction: row;
     justify-content: center;
@@ -376,7 +372,7 @@
     margin-top: 10px;
 }
 
-#min-gpa-container {
+.canvas-grades-pro#min-gpa-container {
     display: flex;
     flex-direction: row;
     justify-content: center;
@@ -384,35 +380,35 @@
     gap: 6px;
 }
 
-#gpa-standard-button-container > *:hover {
+.canvas-grades-pro#gpa-standard-button-container > *:hover {
     cursor: pointer;
 }
 
-#gpa-standard-button {
+.canvas-grades-pro#gpa-standard-button {
     height: 18px;
     width: 20px;
 }
 
-#gpa-standard-button.fa-edit {
+.canvas-grades-pro#gpa-standard-button.fa-edit {
     transform: translate(2px, -1px);
 }
 
 /* TOGGLE SWITCH */
 
-.switch {
+.canvas-grades-pro.switch-container .switch {
   position: relative;
   display: inline-block;
   width: 60px;
   height: 34px;
 }
 
-.switch input { 
+.canvas-grades-pro.switch-container .switch input { 
   opacity: 0;
   width: 0;
   height: 0;
 }
 
-.slider {
+.canvas-grades-pro.switch-container .slider {
   position: absolute;
   cursor: pointer;
   top: 0;
@@ -424,7 +420,7 @@
   transition: .4s;
 }
 
-.slider:before {
+.canvas-grades-pro.switch-container .slider:before {
   position: absolute;
   content: "";
   height: 26px;
@@ -436,15 +432,15 @@
   transition: .4s;
 }
 
-input:checked + .slider {
+.canvas-grades-pro.switch-container input:checked + .slider {
   background-color: #2196F3;
 }
 
-input:focus + .slider {
+.canvas-grades-pro.switch-container input:focus + .slider {
   box-shadow: 0 0 1px #2196F3;
 }
 
-input:checked + .slider:before {
+.canvas-grades-pro.switch-container input:checked + .slider:before {
   -webkit-transform: translateX(26px);
   -ms-transform: translateX(26px);
   transform: translateX(26px);
@@ -452,15 +448,15 @@ input:checked + .slider:before {
 
 /* ROUNDED SLIDERS */
 
-.slider.round {
+.canvas-grades-pro.switch-container .slider.round {
   border-radius: 34px;
 }
 
-.slider.round:before {
+.canvas-grades-pro.switch-container .slider.round:before {
   border-radius: 50%;
 }
 
-.switch-container {
+.canvas-grades-pro.switch-container {
     display: inline-block;
     transform: scale(0.5) translate(-20px, -15px);
     -moz-transform: scale(0.5) translate(-20px, -15px);
@@ -468,12 +464,12 @@ input:checked + .slider:before {
 
 /* TOOLTIP */
 
-.tooltip {
+.canvas-grades-pro.tooltip {
   position: relative;
   display: inline-block;
 }
 
-.tooltip .tooltiptext {
+.canvas-grades-pro.tooltip .tooltiptext {
   visibility: hidden;
   width: 180px;
   font-size: .7em;
@@ -489,7 +485,7 @@ input:checked + .slider:before {
   margin-left: -100px; /* half of the width + left/right padding */
 }
 
-.tooltip .tooltiptext::after {
+.canvas-grades-pro.tooltip .tooltiptext::after {
   content: "";
   position: absolute;
   top: 100%;
@@ -500,6 +496,6 @@ input:checked + .slider:before {
   border-color: black transparent transparent transparent;
 }
 
-.tooltip:hover .tooltiptext {
+.canvas-grades-pro.tooltip:hover .tooltiptext {
   visibility: visible;
 }
