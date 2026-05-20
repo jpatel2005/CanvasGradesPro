@@ -393,6 +393,13 @@
     transform: translate(2px, -1px);
 }
 
+.canvas-grades-pro#card-view-hint {
+    font-size: .75em;
+    color: red;
+    font-weight: bold;
+    margin-top: 10px;
+}
+
 /* TOGGLE SWITCH */
 
 .canvas-grades-pro.switch-container .switch {

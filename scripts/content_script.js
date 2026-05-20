@@ -256,8 +256,99 @@ const applyCustomFont = async function(font) {
   }
 }
 
+// Function for checking if user is in card view mode
+const checkIfInCardView = () => document.getElementById('DashboardCard_Container')?.checkVisibility?.() ?? false;
+
+// Function for waiting for the specified DOM element to be rendered
+const waitForDOMElementRender = function(selector, timeout) {
+  return new Promise(resolve => {
+    const start = Date.now();
+    const check = () => {
+      // if menu exists then resolve
+      const elm = document.querySelector(selector);
+      if (elm !== null) {
+        return resolve(elm);
+      }
+      // check if timeout has been reached
+      if (Date.now() - start > timeout) {
+        return resolve(null);
+      }
+      // poll again after 50ms
+      setTimeout(check, 50);
+    };
+    // start polling after 50ms (for handling menu close)
+    setTimeout(check, 50);
+  });
+}
+
+const injectDashboardCardViewMenuListener = async function() {
+  // allow menu to open
+  await waitForDOMElementRender('span[data-cid="MenuItemGroup"]', 500);
+  // for each of the view options (if rendered), add a listener for 
+  // detecting when an option is clicked for updating the hint message if necessary
+  const viewOptionsContainer = document.querySelector('span[data-cid="MenuItemGroup"]');
+  if (viewOptionsContainer === null) {
+    return;
+  }
+  const viewOptions = viewOptionsContainer.lastElementChild.children;
+  for (const option of viewOptions) {
+    option.addEventListener('click', () => {
+      const viewType = option?.dataset?.testid ?? null;
+      if (viewType === null) {
+        return;
+      }
+      const hintMessage = document.querySelector('.canvas-grades-pro#card-view-hint');
+      if (hintMessage === null) {
+        return;
+      }
+      if (viewType.toLowerCase().includes('card')) {
+        hintMessage.style.display = 'inline';
+        hintMessage.textContent = 'You are now in Card View. Refresh to load CanvasGradesPro grades & GPA.';
+      } else {
+        hintMessage.style.display = 'inline';
+        hintMessage.textContent = 'Switch to Card View using the three dots, then refresh to see CanvasGradesPro grades & GPA.';
+      }
+    }, { once: true });  
+  }
+}
+
+// Function for injecting hint on the dashboard page when the user is not in card view mode
+const injectDashboardCardViewHint = async function() {
+  // three dots button in top right
+  await waitForDOMElementRender('.ic-Dashboard-header__actions', 500);
+  const optionsButton = document.querySelector('.ic-Dashboard-header__actions');
+
+  if (optionsButton === null) {
+    return;
+  }
+  // create the hint message element
+  let hintMessage = document.querySelector('.canvas-grades-pro#card-view-hint');
+  if (hintMessage === null) {
+    hintMessage = document.createElement('span');
+    hintMessage.id = 'card-view-hint';
+    hintMessage.classList.add('canvas-grades-pro');
+    hintMessage.textContent = 'Switch to Card View using the three dots, then refresh to see CanvasGradesPro grades & GPA.';
+    hintMessage.style.display = checkIfInCardView() ? 'none' : 'inline';
+    // add the hint message above the options button (and other buttons in the same row if there are any)
+    optionsButton.insertAdjacentElement('beforebegin', hintMessage);
+  }
+  // get the three dots button
+  const dots = document.querySelector('#DashboardOptionsMenu_Container button');
+  if (dots === null) {
+    return;
+  }
+  // add detection for when the three dots are clicked
+  if (dots.dataset.canvasGradesProDashboardMenuHooked !== 'true') {
+    dots.dataset.canvasGradesProDashboardMenuHooked = 'true';
+    dots.addEventListener('click', injectDashboardCardViewMenuListener);
+  }
+}
+
 // Dashboard page
 if (document.title === 'Dashboard') {
+  (async () => {
+    await injectDashboardCardViewHint();
+  })();
   window.maxActiveSemesterId = -1;
   window.maxActiveSemesterName = -1;
   fetch('/api/v1/dashboard/dashboard_cards', {
@@ -368,8 +459,14 @@ if (document.title === 'Dashboard') {
     return [courses, config];
   })
   .then(async ([courses,config]) => {
+    // check if the user is in card view mode (if not, then inject the hint then exit since nothing else will work)
+    if (!checkIfInCardView()) {
+      await injectDashboardCardViewHint();
+      return config;
+    }
+    const dashboardCardContainer = document.getElementById('DashboardCard_Container');
     // Get the container for all of the dashboard cards
-    const cardsContainer = document.getElementById('DashboardCard_Container').children[0].children[0];
+    const cardsContainer = dashboardCardContainer.children[0].children[0];
     // Store grades that are computed for the grade overlay (to prevent re-calculation) - Format: { course_id : [course_grade, course_letter_grade] }
     window.computedGrades = {};
     // Map all of the courses to the grades in that course
@@ -442,6 +539,9 @@ if (document.title === 'Dashboard') {
     return config;
   })
   .then(async config => {
+    if (!checkIfInCardView()) {
+      return;
+    }
     // GPA Calculator
     const customStyling = document.createElement('style');
     customStyling.textContent = `
