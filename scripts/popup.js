@@ -165,6 +165,8 @@ saveChanges.addEventListener('click', async () => {
     saveChangesLabel.style.visibility = 'visible';
     saveChangesLabel.style.color = 'red';
     saveChangesLabel.textContent = "Changes failed to save!";
+    console.error('An error occurred when saving config changes:', err);
+    return;
   }
   saveChangesLabel.style.visibility = 'visible';
   saveChangesLabel.style.color = 'black';
