@@ -148,52 +148,159 @@ const validateDropCounts = function(lowDrops, highDrops, totalAssignments) {
 
 // Sort the assignments by simulating the grade after dropping the current assignment
 // Higher grade after drop is placed earlier
-const sortByDropImpact = function(groupData) {
+const sortBySingleDropImpact = function(groupData) {
   groupData.grades.sort((a,b) => {
-    const dec_a = (groupData.score - a.score) / (groupData.total - a.total);
-    const dec_b = (groupData.score - b.score) / (groupData.total - b.total);
+    const total_a = groupData.total - a.total;
+    const total_b = groupData.total - b.total;
+    const dec_a = total_a === 0 ? 0 : (groupData.score - a.score) / (total_a);
+    const dec_b = total_b === 0 ? 0 : (groupData.score - b.score) / (total_b);
     return dec_b - dec_a;
   });
+}
+
+/**
+ * Determine optimal drops on a list of assignments, while considering neverDropIds
+ * maximizeRetained: true => low drops, false => high drops
+ * maxTotal: largest droppable total before low/high drops
+ * Reference: https://cseweb.ucsd.edu/~dakane/droplowest.pdf
+ */
+const findOptimalDrops = function(assignments, dropCount, neverDropIds, maximizeRetained, maxTotal) {
+  if (dropCount <= 0) {
+    return [];
+  }
+  const neverDrop = new Set(neverDropIds ?? []);
+  // Keep never-drop assignments in the ratio, but out of the drop candidates
+  const fixed = [];
+  const droppable = [];
+  for (const assignment of assignments) {
+    if (neverDrop.has(assignment.id)) {
+      fixed.push(assignment);
+    } else {
+      droppable.push(assignment);
+    }
+  }
+  // If nothing can be dropped, then exit early
+  if (droppable.length <= 1) {
+    return [];
+  }
+  // Drop count is bounded to leave at least one assignment undropped
+  const actualDropCount = Math.min(dropCount, droppable.length-1);
+  // Number of undropped assignments
+  const retainCount = droppable.length - actualDropCount;
+  // Canvas drops by earned score when all original droppable totals are zero
+  if (maxTotal === 0) {
+    // Sort by score in ascending order, with assignment id as the tiebreaker
+    const ordered = droppable.slice().sort((a,b) => {
+      const diff = a.score - b.score;
+      return diff !== 0 ? diff : Number(a.id) - Number(b.id);
+    });
+    // Perform drops (either low or high), then return dropped assignments
+    const retained = maximizeRetained ? ordered.slice(actualDropCount) : ordered.slice(0, retainCount);
+    const retainedSet = new Set(retained);
+    return droppable.filter(assignment => !retainedSet.has(assignment));
+  }
+  const allAssignments = droppable.concat(fixed);
+  // Separate assignments with a nonzero and zero point total
+  const pointed = [];
+  const unpointed = [];
+  for (const assignment of allAssignments) {
+    if (assignment.total === 0) {
+      unpointed.push(assignment);
+    } else {
+      pointed.push(assignment)
+    }
+  }
+  // Compute ratios for each assignment
+  const ratios = pointed.map(assignment => assignment.score / assignment.total).sort();
+  // Determine the upper and lower bounds for the search interval
+  let qLow = ratios[0];
+  let qHigh = ratios[ratios.length-1];
+  // Adjust qHigh if zero point total assignments exist
+  if (unpointed.length > 0) {
+    const [pointedScore, pointedTotal] = pointed.reduce(([score, total], assignment) => [score + assignment.score, total + assignment.total], [0, 0]);
+    const unpointedScore = unpointed.reduce((score, assignment) => score + assignment.score, 0);
+    qHigh = (Math.max(pointedTotal, pointedScore) + unpointedScore) / pointedTotal;
+  }
+  // Determine starting group grade for testing
+  let q = (qLow + qHigh) / 2;
+  // Selects the retained assignments at the given ratio
+  const rankAt = ratio => {
+    // Each assignment becomes [transformed score, assignment]
+    const ranked = droppable.map(assignment => [assignment.score - ratio * assignment.total, assignment]);
+    // Sort by score, while considering direction based on type of drop
+    ranked.sort((a,b) => {
+      const diff = maximizeRetained ? b[0] - a[0] : a[0] - b[0];
+      return diff !== 0 ? diff : Number(a[1].id) - Number(b[1].id);
+    });
+    // Return the total transformed score and the retained assignments
+    const retained = ranked.slice(0, retainCount);
+    const impact = retained.reduce((sum, pair) => sum + pair[0], 0) + fixed.reduce((sum, assignment) => sum + assignment.score - ratio * assignment.total, 0);
+    return [impact, retained.map(pair => pair[1])];
+  }
+  let [impact, retained] = rankAt(q);
+  // Stopping tolerance for the size of the interval (same as Canvas)
+  const threshold = 1/(2 * retainCount * maxTotal ** 2);
+  // Perform the bisection search until the width is smaller than the tolerance
+  while (qHigh - qLow >= threshold) {
+    if (impact < 0) {
+      qHigh = q;
+    } else {
+      qLow = q;
+    }
+    q = (qLow + qHigh) / 2;
+    if (q === qLow || q === qHigh) {
+      break;
+    }
+    [impact, retained] = rankAt(q);
+  }
+  const retainedSet = new Set(retained);
+  return droppable.filter(assignment => !retainedSet.has(assignment));
+}
+
+/**
+ * Choose low drops first, then high drops from the survivors.
+ * Rearrange grades in-place as [ low drops | retained | high drops ]
+ * Returns the actual [low, high] drop counts
+ */
+const sortByDropImpact = function(groupData, lowDrops, highDrops, neverDropIds) {
+  const grades = groupData.grades;
+  const neverDrop = new Set(neverDropIds ?? []);
+  const droppable = grades.filter(grade => !neverDrop.has(grade.id));
+  // Exit early if there is nothing to drop
+  if (droppable.length === 0 || (lowDrops === 0 && highDrops === 0)) {
+    return [0,0];
+  }
+  // compute low drop and high drop counts
+  lowDrops = Math.min(lowDrops, droppable.length-1);
+  highDrops = lowDrops + highDrops >= droppable.length ? 0 : highDrops;
+  const maxTotal = Math.max(...droppable.map(grade => grade.total));
+  // compute low drops
+  const lowDropped = findOptimalDrops(grades, lowDrops, neverDropIds, true, maxTotal);
+  const lowDroppedSet = new Set(lowDropped);
+  const afterLowGrades = grades.filter(grade => !lowDroppedSet.has(grade));
+  // compute high drops
+  const highDropped = findOptimalDrops(afterLowGrades, highDrops, neverDropIds, false, maxTotal);
+  const highDroppedSet = new Set(highDropped);
+  const retained = afterLowGrades.filter(grade => !highDroppedSet.has(grade));
+  // rearranges grades so it is of the form [ low drops | retained | high drops ]
+  grades.splice(0, grades.length, ...lowDropped, ...retained, ...highDropped);
+  return [lowDropped.length, highDropped.length];
 }
 
 // Apply low/high drops to an assignment group (in-place)
 // onDrop is called with each dropped assignment
 const applyDrops = function(groupData, lowDrops, highDrops, neverDropIds, onDrop = () => {}) {
-  sortByDropImpact(groupData);
-  // Create a set of the assignments that should not be dropped
-  const neverDrop = new Set(neverDropIds ?? []);
+  const [actualLowDrops, actualHighDrops] = sortByDropImpact(groupData, lowDrops, highDrops, neverDropIds);
   // Perform the low drops
-  for (let i = 0; i < lowDrops; i++) {
-    if (groupData.grades.length === 0) {
-      break;
-    }
-    const assignment = groupData.grades[0];
-    // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
-    if (neverDrop.has(assignment.id)) {
-      groupData.grades.shift();
-      // Decrement i since the current assignment is not actually being dropped
-      i--;
-      continue;
-    }
+  // splice removes all of the elements and returns them for processing
+  for (const assignment of groupData.grades.splice(0, actualLowDrops)) {
     groupData.score -= assignment.score;
     groupData.total -= assignment.total;
-    // Remove elements from grades array
-    groupData.grades.shift();
     onDrop(assignment);
   }
   // Perform the high drops
-  for (let i = 0; i < highDrops; i++) {
-    if (groupData.grades.length === 0) {
-      break;
-    }
+  for (let i = 0; i < actualHighDrops; i++) {
     const assignment = groupData.grades[groupData.grades.length-1];
-    // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
-    if (neverDrop.has(assignment.id)) {
-      groupData.grades.pop();
-      // Decrement i since the current assignment is not actually being dropped
-      i--;
-      continue;
-    }
     groupData.score -= assignment.score;
     groupData.total -= assignment.total;
     groupData.grades.pop();
@@ -3535,7 +3642,7 @@ if (document.title === 'Dashboard') {
         // Check if drops were used for the current group, and if so, then perform the correct operation for finding the "min grade"
         if (minGradeArr[3] != null) {
           // Sort the min grades array
-          sortByDropImpact(map[minGradeArr[5]]);
+          sortBySingleDropImpact(map[minGradeArr[5]]);
           const gradesArr = map[minGradeArr[5]].grades;
           // Remove all assignments that are "never dropped" from the grades array (makes processing much easier)
           // Removal of the assignments in being done in place
@@ -3837,9 +3944,9 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
     document.querySelectorAll('#grades_summary .dropped').forEach(assignment => assignment.classList.remove('dropped'));
     // Attempt to perform drops here (also update UI for dropped assignments)
     for (const group of groups) {
-      const totalAssignments = map[group.name].grades.length;
-      // Check if the number of drops is illegal (>= total assignments) and make adjustments accordingly
-      const [lowDrops, highDrops] = validateDropCounts(config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0, config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0, totalAssignments);
+      // Get the raw number of drops (necessary adjustments are made by applyDrops)
+      const lowDrops = config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0;
+      const highDrops = config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0;
       // If there are no drops to be done, then no further processing is necessary
       if (lowDrops === 0 && highDrops === 0) {
         continue;
@@ -3853,8 +3960,7 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
       if (getCourseStatistics && map[group.name].statsTotal !== 0) {
         for (const [stat] of STAT_FIELDS) {
           const statData = map[group.name][stat];
-          const [statLow, statHigh] = validateDropCounts(lowDrops, highDrops, statData.grades.length);
-          applyDrops(statData, statLow, statHigh, group.rules.never_drop);
+          applyDrops(statData, lowDrops, highDrops, group.rules.never_drop);
         }
       }
     }
