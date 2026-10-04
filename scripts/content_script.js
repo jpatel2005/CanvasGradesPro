@@ -11,6 +11,20 @@ const isObjectEmpty = function(obj) {
 }
 
 const getSize = obj => new Blob([JSON.stringify(obj)]).size;
+// Matches non-negative decimal numbers
+const NON_NEGATIVE_NUMBER = /^((\d+(\.(\d+)?)?)|(\.\d+))$/;
+
+// Fetch every page of a paginated Canvas API endpoint
+const fetchAllPages = async function(url) {
+  const items = [];
+  for (let page = 1;; page++) {
+    const pageItems = await (await fetch(`${url}&page=${page}`)).json();
+    if (pageItems.length === 0) {
+      return items;
+    }
+    items.push(...pageItems);
+  }
+}
 
 // Function for abstracting the config saving process
 const saveConfig = async function(config, key) {
@@ -85,6 +99,19 @@ const default_gpa_standard = {
   'F': 0.0
 };
 
+// Letter grades sorted by GPA (highest first), ties broken by the letter grade representation
+const sortGpaStandardKeys = gpaStandard => Object.keys(gpaStandard).sort((a,b) => {
+  // If the GPA's associated with the two current letter grades are not equal, then compare them
+  if (gpaStandard[a] !== gpaStandard[b]) {
+    return gpaStandard[b] - gpaStandard[a];
+  }
+  // If they are equal, then compare the letter grade representations (while considering plus and minus signs)
+  return (b + ',').localeCompare(a + ',');
+});
+
+// Letter grade associated with the highest GPA
+const getMaxLetterGrade = gpaStandard => sortGpaStandardKeys(gpaStandard)[0];
+
 /**
  * Function for finding the variance of an array of letter grades
  * Uses the formula: Var(X) = (1/n) * sum of (x_i - u)^2 = [(1/n) * sum of (x_i)^2] - [(1/n) * sum of x_i]^2 
@@ -119,6 +146,63 @@ const validateDropCounts = function(lowDrops, highDrops, totalAssignments) {
   return [newLowDrops, newHighDrops];
 }
 
+// Sort the assignments by simulating the grade after dropping the current assignment
+// Higher grade after drop is placed earlier
+const sortByDropImpact = function(groupData) {
+  groupData.grades.sort((a,b) => {
+    const dec_a = (groupData.score - a.score) / (groupData.total - a.total);
+    const dec_b = (groupData.score - b.score) / (groupData.total - b.total);
+    return dec_b - dec_a;
+  });
+}
+
+// Apply low/high drops to an assignment group (in-place)
+// onDrop is called with each dropped assignment
+const applyDrops = function(groupData, lowDrops, highDrops, neverDropIds, onDrop = () => {}) {
+  sortByDropImpact(groupData);
+  // Create a set of the assignments that should not be dropped
+  const neverDrop = new Set(neverDropIds ?? []);
+  // Perform the low drops
+  for (let i = 0; i < lowDrops; i++) {
+    if (groupData.grades.length === 0) {
+      break;
+    }
+    const assignment = groupData.grades[0];
+    // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
+    if (neverDrop.has(assignment.id)) {
+      groupData.grades.shift();
+      // Decrement i since the current assignment is not actually being dropped
+      i--;
+      continue;
+    }
+    groupData.score -= assignment.score;
+    groupData.total -= assignment.total;
+    // Remove elements from grades array
+    groupData.grades.shift();
+    onDrop(assignment);
+  }
+  // Perform the high drops
+  for (let i = 0; i < highDrops; i++) {
+    if (groupData.grades.length === 0) {
+      break;
+    }
+    const assignment = groupData.grades[groupData.grades.length-1];
+    // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
+    if (neverDrop.has(assignment.id)) {
+      groupData.grades.pop();
+      // Decrement i since the current assignment is not actually being dropped
+      i--;
+      continue;
+    }
+    groupData.score -= assignment.score;
+    groupData.total -= assignment.total;
+    groupData.grades.pop();
+    onDrop(assignment);
+  }
+  // Re-calculate the decimal for the current group after applying drops
+  groupData.decimal = groupData.total === 0 ? 0 : Math.round((1e4 * groupData.score) / groupData.total) / 1e4;
+}
+
 /**
  * Function for calculating possible combinations for your desired minimum gpa
  * Queue-based approach with duplicate prevention
@@ -128,14 +212,7 @@ const validateDropCounts = function(lowDrops, highDrops, totalAssignments) {
 */
 const getMinGpaCombinations = function(gpaStandard, courseCredits, gpaRequired) {
   courseCredits.sort((a,b) => b-a);
-  const sortedGpaStandard = Object.keys(gpaStandard).sort((a, b) => {
-    // If the GPA's associated with the two current letter grades are not equal, then compare them
-    if (gpaStandard[a] !== gpaStandard[b]) {
-      return gpaStandard[b] - gpaStandard[a];
-    }
-    // If they are equal, then compare the letter grade representations (while considering plus and minus signs)
-    return (b + ',').localeCompare(a + ',');
-  });
+  const sortedGpaStandard = sortGpaStandardKeys(gpaStandard);
   // Modify the keys so that the non-unique keys are "filtered" out (this will be sorted is descending order)
   const gpaStandardKeys = [];
   for (let i = 0; i < sortedGpaStandard.length; i++) {
@@ -232,7 +309,7 @@ const applyCustomFont = async function(font) {
       window.customFont = null;
       return;
     }
-    const fontFamily = RegExp(/^\/specimen\/([^\/]+)\/?$/).exec(url.pathname)[1].replace(/\+/g, ' ');
+    const fontFamily = /^\/specimen\/([^\/]+)\/?$/.exec(url.pathname)[1].replace(/\+/g, ' ');
     const fontURL = new URL(`https://fonts.googleapis.com/css2`);
     fontURL.searchParams.set('family', fontFamily.replace(/\s/g, '%2b'));
     fontURL.searchParams.set('display', 'swap');
@@ -251,7 +328,7 @@ const applyCustomFont = async function(font) {
     customFontStyle.textContent = await response.text();
     // Save the custom font family
     window.customFont = fontFamily;
-  } catch (e) {
+  } catch {
     window.customFont = null;
   }
 }
@@ -346,9 +423,9 @@ const injectDashboardCardViewHint = async function() {
 
 // Dashboard page
 if (document.title === 'Dashboard') {
-  (async () => {
-    await injectDashboardCardViewHint();
-  })();
+  injectDashboardCardViewHint().catch(err => {
+    console.error('An error has occurred when injecting the dashboard card view indicator', err);
+  });
   window.maxActiveSemesterId = -1;
   window.maxActiveSemesterName = -1;
   fetch('/api/v1/dashboard/dashboard_cards', {
@@ -372,11 +449,6 @@ if (document.title === 'Dashboard') {
       }
     }));
   })
-  .catch(err => {
-    // Probably not on a Canvas page, so stop the execution of this code
-    console.error('An error has occurred when fetching dashboard cards', err);
-    thisFunctionDoesNotExistAndWasCreatedWithTheOnlyPurposeOfStopJavascriptExecutionOfAllTypesIncludingCatchAndAnyArbitraryWeirdScenario();
-  })
   .then(async courses => {
     // Listen for updating grade overlays when the settings are updated using the popup
     chrome.storage.onChanged.addListener(async (changes, _namespace) => {
@@ -387,7 +459,6 @@ if (document.title === 'Dashboard') {
         }
         // If the storage update was for the gpa card, then handle that then exit
         if (key === 'gpa_card') {
-          // code here
           // Check if the gpa card is being hidden
           const gpaCard = document.querySelector('.ic-DashboardCard:has(> #canvas-grades-pro-gpa-calculator)');
           if (gpaCard === null) {
@@ -453,7 +524,6 @@ if (document.title === 'Dashboard') {
     if (config.primary_color === undefined) {
       config.primary_color = getComputedStyle(document.body).getPropertyValue('--dt-color-primary');
       await saveConfig(config.primary_color, 'primary_color');
-      // await saveConfig({ primary_color: config.primary_color }, null);
     }
     // Return config for the current course and the global config
     return [courses, config];
@@ -514,8 +584,7 @@ if (document.title === 'Dashboard') {
         }
         gradeOverlay.classList.add('grade_overlay');
         card.prepend(gradeOverlay);
-        // TODO Consider removing the letter grade since it is not being used
-        window.computedGrades[course.id.toString()] = [grade, letterGrade];
+        window.computedGrades[course.id.toString()] = grade;
         return grade;
       } catch (err) {
         console.error(`Failed to get grade for course ${course.id}:`, err);
@@ -551,7 +620,6 @@ if (document.title === 'Dashboard') {
 
     #canvas-grades-pro-gpa-calculator {
       margin-top: 20px;
-      // padding: 47.5px;
       padding: 20px;
       border-radius: 8px;
       background-color: white;
@@ -879,23 +947,8 @@ if (document.title === 'Dashboard') {
     gpaCard.style.display = 'none';
     gpaCard.appendChild(gpaCalculatorContainer);
     // Get all of the courses that the user has taken (that they can view or at least know the existance of)
-    // Loop through all of the pages until the page is empty (or until the world ends...)
-    const allCourses = [];
-    let coursesPage = 1;
-    while (true) {
-      const response = await fetch(`/api/v1/courses?per_page=100&include[]=term&state[]=unpublished&state[]=available&state[]=completed&state[]=deleted&enrollment_type=student&page=${coursesPage}`);
-      const courses = await response.json();
-      if (courses.length === 0) {
-        break;
-      }
-      for (const course of courses) {
-        if (course.access_restricted_by_date === true) {
-          continue;
-        }
-        allCourses.push(course);
-      }
-      coursesPage++;
-    }
+    const allCourses = (await fetchAllPages(`/api/v1/courses?per_page=100&include[]=term&state[]=unpublished&state[]=available&state[]=completed&state[]=deleted&enrollment_type=student`))
+    .filter(course => course.access_restricted_by_date !== true);
     let gpaStandard = config.default_gpa_standard ?? default_gpa_standard;
     // Consider the user preference for adding the gpa card to the beginning or end of the dashboard card container
     if ((config.gpa_card?.position ?? 'first') === 'first') {
@@ -904,7 +957,7 @@ if (document.title === 'Dashboard') {
       document.querySelector('.ic-DashboardCard__box__container').appendChild(gpaCard);
     }
     // Create popup for editing the configuration for the gpa calculator
-    const popup = document.createElement('div');
+    const gpaCoursePopup = document.createElement('div');
     const overlay = document.createElement('div');
     const content = document.createElement('div');
     const closeButton = document.createElement('span');
@@ -935,14 +988,7 @@ if (document.title === 'Dashboard') {
     // Temporarily add "auto" to gpa standard (so that it is included in the dropdown menu)
     gpaStandard['AUTO'] = Infinity;
     gpaStandard['blank'] = Infinity;
-    const sortedGpaStandard = Object.keys(gpaStandard).sort((a,b) => {
-      // If the GPA's associated with the two current letter grades are not equal, then compare them
-      if (gpaStandard[a] !== gpaStandard[b]) {
-        return gpaStandard[b] - gpaStandard[a];
-      }
-      // If they are equal, then compare the letter grade representations (while considering plus and minus signs)
-      return (b + ',').localeCompare(a + ',');
-    });
+    const sortedGpaStandard = sortGpaStandardKeys(gpaStandard);
     for (const letterGrade of sortedGpaStandard) {
       const option = document.createElement('option');
       option.classList.add(letterGrade);
@@ -982,7 +1028,6 @@ if (document.title === 'Dashboard') {
           if (course.term === undefined || badTermNames.includes(course.term.name)) {
             gridItem.textContent = '\u200b';
           } else {
-            // gridItem.dataset.semester_id = course.term.id;
             gridItem.textContent = course.term.name;
           }
         } else if (name === 'credits') {
@@ -1031,7 +1076,7 @@ if (document.title === 'Dashboard') {
     gpaSemesterSubTitle.textContent = currentSemesterName || 'N/A';
     gpaSemesterSubTitle.style.fontSize = '.7rem';
     popupContainer.appendChild(gpaGrid);
-    popup.classList.add('popup-canvas-grades-pro');
+    gpaCoursePopup.classList.add('popup-canvas-grades-pro');
     overlay.classList.add('overlay');
     content.classList.add('content');
     closeButton.classList.add('close-btn');
@@ -1057,29 +1102,48 @@ if (document.title === 'Dashboard') {
       semestersDropdown.appendChild(option);
     }
     // Add the missing courses to the semester dropdown
-    for (const semesterName of Object.keys(window.semesters_missing)) {
-      // Don't add the semester as it already exists (as a semester known by Canvas)
-      if (window.semester_lookup[semesterName] !== undefined) {
-        continue;
+    const addMissingSemesterOptions = function() {
+      for (const semesterName of Object.keys(window.semesters_missing)) {
+        // Don't add the semester as it already exists (as a semester known by Canvas)
+        if (window.semester_lookup[semesterName] !== undefined) {
+          continue;
+        }
+        const option = document.createElement('option');
+        option.value = `${semesterName}-special`;
+        option.textContent = semesterName;
+        option.classList.add(`semester-${semesterName.trim().replace(/\s/g, '-')}`, 'semester-special');
+        semestersDropdown.appendChild(option);
       }
-      const option = document.createElement('option');
-      option.value = `${semesterName}-special`;
-      option.textContent = semesterName;
-      option.classList.add(`semester-${semesterName.trim().replace(/\s/g, '-')}`, 'semester-special');
-      semestersDropdown.appendChild(option);
     }
+    // Display the GPA of the semester in the semesters dropdown (returns true if it is a missing courses semester)
+    const showSelectedSemesterGpa = function() {
+      let selectedSemesterData = window.semesters[window.semesterDropdownValue];
+      if (selectedSemesterData === undefined) {
+        const semesterName = window.semesterDropdownValue.slice(0,-8);
+        selectedSemesterData = window.semesters_missing[semesterName];
+        gpaSemesterValue.textContent = selectedSemesterData[0] === -1 ? '⚠️' : (selectedSemesterData[1] === 0 ? 'N/A' : (Math.floor(1e3 * selectedSemesterData[0] / selectedSemesterData[1]) / 1e3).toFixed(3));
+        semesterCreditsValue.textContent = selectedSemesterData[0] === -1 ? '' : (selectedSemesterData[1] + selectedSemesterData[2]) + ' Credits';
+        gpaSemesterError.textContent = selectedSemesterData[0] === -1 ? `Credit count is unknown for some ${semesterName} courses` : '';
+        return true;
+      }
+      gpaSemesterValue.textContent = selectedSemesterData[1] === -1 ? '⚠️' : (selectedSemesterData[2] === 0 ? 'N/A' : (Math.floor(1e3 * selectedSemesterData[1] / selectedSemesterData[2]) / 1e3).toFixed(3));
+      semesterCreditsValue.textContent = selectedSemesterData[1] === -1 ? '' : (selectedSemesterData[2] + selectedSemesterData[3]) + ' Credits';
+      gpaSemesterError.textContent = selectedSemesterData[1] === -1 ? `Credit count is unknown for some ${selectedSemesterData[0]} courses` : '';
+      return false;
+    }
+    addMissingSemesterOptions();
     content.appendChild(closeButton);
     content.appendChild(popupTitle);
     content.appendChild(popupNotes);
     content.appendChild(popupContainer);
     content.appendChild(saveChangesLabel);
     content.appendChild(saveChangesButton);
-    popup.appendChild(overlay);
-    popup.appendChild(content);
+    gpaCoursePopup.appendChild(overlay);
+    gpaCoursePopup.appendChild(content);
     // Copy the existing popup and modify it for the gpa standard configuration popup and the min gpa required for your current semester gpa calculator
-    const gpaStandardPopup = popup.cloneNode(true);
-    const minGpaPopup = popup.cloneNode(true);
-    const missingCoursesPopup = popup.cloneNode(true);
+    const gpaStandardPopup = gpaCoursePopup.cloneNode(true);
+    const minGpaPopup = gpaCoursePopup.cloneNode(true);
+    const missingCoursesPopup = gpaCoursePopup.cloneNode(true);
     // Modify the cloned popups
     const gpaStandardContent = gpaStandardPopup.querySelector('.content');
     const minGpaContent = minGpaPopup.querySelector('.content');
@@ -1138,8 +1202,21 @@ if (document.title === 'Dashboard') {
       }
       trashCell.remove();
     }
-    // Function for adding a new empty row
-    const addNewRow = function() {
+    // Grade dropdown for the missing courses (AUTO option is replaced with a NG / No Grade option)
+    const createMissingGradeDropdown = function() {
+      const dropdown = gradeDropdown.cloneNode(true);
+      // Replace AUTO option with NG option (NG -> No Grade)
+      const tmp = dropdown.querySelector('option[class="AUTO"]');
+      tmp.classList.replace('AUTO', 'NG');
+      tmp.textContent = 'NG';
+      dropdown.style.width = '70px';
+      // Re-append option to move it to the bottom
+      tmp.remove();
+      dropdown.appendChild(tmp);
+      return dropdown;
+    }
+    // Function for adding a row for a missing course (or an empty row if no course is provided)
+    const addMissingCourseRow = function(course = null) {
       for (const col of missingCols) {
         const gridItem = document.createElement('div');
         const name = col.replace(/\s/g, '-').toLowerCase();
@@ -1163,17 +1240,20 @@ if (document.title === 'Dashboard') {
             textInput.maxLength = 4;
             textInput.style.width = '50px';
           }
+          if (course !== null) {
+            textInput.value = name === 'course-name' ? course.name : course[name];
+          }
           gridItem.appendChild(textInput);
         } else if (name === 'grade') {
-          const dropdown = gradeDropdown.cloneNode(true);
-          // Replace AUTO option with NG option (NG -> No Grade)
-          const tmp = dropdown.querySelector('option[class="AUTO"]');
-          tmp.classList.replace('AUTO', 'NG');
-          tmp.textContent = 'NG';
-          dropdown.style.width = '70px';
-          // Re-append option to move it to the bottom
-          tmp.remove();
-          dropdown.appendChild(tmp);
+          const dropdown = createMissingGradeDropdown();
+          if (course !== null) {
+            const storageOption = dropdown.querySelector(`option[class="${course.grade}"]`);
+            if (storageOption !== null) {
+              storageOption.selected = true;
+            } else {
+              dropdown.querySelector('option[class="blank"]').selected = true;
+            }
+          }
           gridItem.appendChild(dropdown);
         } else if (name === '') {
           const trashIcon = document.createElement('i');
@@ -1190,80 +1270,13 @@ if (document.title === 'Dashboard') {
     }
     // Get all of the missing gpa courses (stored as an array of objects)
     for (const course of config.gpa_missing) {
-      let pos = 0;
-      for (const col of missingCols) {
-        const gridItem = document.createElement('div');
-        const name = col.replace(/\s/g, '-').toLowerCase();
-        gridItem.classList.add('grid-item', 'row-special');
-        // Don't add empty string to classlist (will throw error)
-        if (name.length !== 0) {
-          gridItem.classList.add(name);
-        }
-        if (name === 'course-name') {
-          const textInput = document.createElement('input');
-          textInput.type = 'text';
-          textInput.spellcheck = false;
-          textInput.autocomplete = false;
-          textInput.style.textAlign = 'center';
-          textInput.style.width = '140px';
-          textInput.value = course.name;
-          gridItem.appendChild(textInput);
-        } else if (name === 'term') {
-          const textInput = document.createElement('input');
-          textInput.type = 'text';
-          textInput.spellcheck = false;
-          textInput.autocomplete = false;
-          textInput.style.textAlign = 'center';
-          textInput.style.fontSize = '90%';
-          textInput.style.width = '120px';
-          textInput.value = course.term;
-          gridItem.appendChild(textInput);
-        } else if (name === 'credits') {
-          const textInput = document.createElement('input');
-          textInput.type = 'text';
-          textInput.maxLength = 4;
-          textInput.spellcheck = false;
-          textInput.autocomplete = false;
-          textInput.style.textAlign = 'center';
-          textInput.style.width = '50px';
-          textInput.value = course.credits;
-          gridItem.appendChild(textInput);
-        } else if (name === 'grade') {
-          const dropdown = gradeDropdown.cloneNode(true);          
-          // Replace AUTO option with NG option (NG -> No Grade)
-          const tmp = dropdown.querySelector('option[class="AUTO"]');
-          tmp.classList.replace('AUTO', 'NG');
-          tmp.textContent = 'NG';
-          tmp.remove();
-          dropdown.style.width = '70px';
-          // Re-append option to move it to the bottom
-          dropdown.appendChild(tmp);
-          const storageOption = dropdown.querySelector(`option[class="${course.grade}"]`);
-          if (storageOption !== null) {
-            storageOption.selected = true;
-          } else {
-            dropdown.querySelector(`option[class="blank"]`).selected = true;
-          }
-          gridItem.appendChild(dropdown);
-        } else if (name === '') {
-          const trashIcon = document.createElement('i');
-          trashIcon.classList.add('fas', 'fa-trash');
-          trashIcon.style.height = '20px';
-          trashIcon.style.margin = '10px 0';
-          trashIcon.style.color = 'firebrick';
-          trashIcon.style.cursor = 'pointer';
-          trashIcon.addEventListener('click', () => removeRow(gridItem));
-          gridItem.appendChild(trashIcon);
-        }
-        missingCoursesGrid.appendChild(gridItem);
-      }
-      pos++;
+      addMissingCourseRow(course);
     }
     // If there are no rows, then add one empty row (so that the user isn't as confused)
     if (config.gpa_missing.length === 0) {
-      addNewRow();
+      addMissingCourseRow();
     }
-    addRowContainer.addEventListener('click', addNewRow);
+    addRowContainer.addEventListener('click', () => addMissingCourseRow());
     const missingCoursesContainer = popupContainer.cloneNode();
     missingCoursesContainer.appendChild(missingCoursesGrid);
     // Add missing course elemenets to the popup
@@ -1301,7 +1314,7 @@ if (document.title === 'Dashboard') {
           return;
         }
         // Validate credits input
-        if (!/^((\d+(\.(\d+)?)?)|(\.\d+))$/.test(creditsVal)) {  
+        if (!NON_NEGATIVE_NUMBER.test(creditsVal)) {  
           missingSaveChangesLabel.classList.add('error');
           missingSaveChangesLabel.textContent = 'Changes failed to save! Please use numerical values \u2265 0 for your credits';
           return;
@@ -1347,36 +1360,14 @@ if (document.title === 'Dashboard') {
       // Remove "old" missing semesters from the dropdown
       semestersDropdown.querySelectorAll('.semester-special').forEach(option => option.remove());
       // Add missing semesters to the dropdown
-      for (const semesterName of Object.keys(window.semesters_missing)) {
-        // Don't add the semester as it already exists (as a semester known by Canvas)
-        if (window.semester_lookup[semesterName] !== undefined) {
-          continue;
-        }
-        const option = document.createElement('option');
-        option.value = `${semesterName}-special`;
-        option.textContent = semesterName;
-        option.classList.add(`semester-${semesterName.trim().replace(/\s/g, '-')}`, 'semester-special');
-        semestersDropdown.appendChild(option);
-      }
+      addMissingSemesterOptions();
       window.semesterDropdownIndex = initialPos === -1 ? 0 : initialPos;
       semestersDropdown.selectedIndex = window.semesterDropdownIndex;
       window.semesterDropdownIndex = semestersDropdown.selectedIndex;
       window.semesterDropdownValue = semestersDropdown.options[semestersDropdown.selectedIndex].value;
       gpaSemesterSubTitle.textContent = semestersDropdown.options[semestersDropdown.selectedIndex].textContent;
       gpaSemesterEditIcon.classList.replace('fa-save', 'fa-edit');
-      let selectedSemesterData = window.semesters[window.semesterDropdownValue];
-      if (selectedSemesterData === undefined) {
-        const semesterName = window.semesterDropdownValue.slice(0,-8);
-        selectedSemesterData = window.semesters_missing[semesterName];
-        gpaSemesterValue.textContent = selectedSemesterData[0] === -1 ? '⚠️' : (selectedSemesterData[1] === 0 ? 'N/A' : (Math.floor(1e3 * selectedSemesterData[0] / selectedSemesterData[1]) / 1e3).toFixed(3));
-        semesterCreditsValue.textContent = selectedSemesterData[0] === -1 ? '' : (selectedSemesterData[1] + selectedSemesterData[2]) + ' Credits';
-        gpaSemesterError.textContent = selectedSemesterData[0] === -1 ? `Credit count is unknown for some ${semesterName} courses` : '';
-        return;
-      }
-      gpaSemesterValue.textContent = selectedSemesterData[1] === -1 ? '⚠️' : (selectedSemesterData[2] === 0 ? 'N/A' : (Math.floor(1e3 * selectedSemesterData[1] / selectedSemesterData[2]) / 1e3).toFixed(3));
-      semesterCreditsValue.textContent = selectedSemesterData[1] === -1 ? '' : (selectedSemesterData[2] + selectedSemesterData[3]) + ' Credits';
-      gpaSemesterError.textContent = selectedSemesterData[1] === -1 ? `Credit count is unknown for some ${selectedSemesterData[0]} courses` : '';
-
+      showSelectedSemesterGpa();
       // Processing was completed without finding any errors, so configure the label for a successful operation
       missingSaveChangesLabel.classList.remove('error');
       missingSaveChangesLabel.textContent = 'Changes saved successfully!';
@@ -1464,6 +1455,7 @@ if (document.title === 'Dashboard') {
         const input = gpaStandardInput.value.trim();
         if (input === '') {
           gpaStandardInputMessage.textContent = 'Please provide a non-empty input';
+          gpaStandardInputMessage.style.display = 'block';
           return;
         }
         // Process each line and the data (only update in storage if everything is valid)
@@ -1473,16 +1465,16 @@ if (document.title === 'Dashboard') {
           if (line.trim().length === 0) {
             continue;
           }
-          // If the current line is invalid, then set the error message and exit
-          if (!/^.+\s+((\d+(\.(\d+)?)?)|(\.\d+))$/.test(line.trim())) {
+          const curr = line.trim().split(/\s+/);
+          if (curr.length !== 2 || !NON_NEGATIVE_NUMBER.test(curr[1])) {
             gpaStandardInputMessage.textContent = `Invalid input for "${line}"`;
             gpaStandardInputMessage.style.display = 'block';
             return;
           }
-          // Line is valid, parse values then store
-          const curr = line.trim().split(/\s+/);
           if (data[curr[0]] !== undefined) {
-            gpaStandardInputMessage.textContent = `Please provide unique letter grades. "${curr[0]} was reused."`
+            gpaStandardInputMessage.textContent = `Please provide unique letter grades. "${curr[0]}" was reused.`;
+            gpaStandardInputMessage.style.display = 'block';
+            return;
           }
           data[curr[0]] = Number(curr[1]);
         }
@@ -1492,14 +1484,7 @@ if (document.title === 'Dashboard') {
         await saveConfig(config.default_gpa_standard, 'default_gpa_standard');
         gpaStandard['AUTO'] = Infinity;
         gpaStandard['blank'] = Infinity;
-        const sortedGpaStandard = Object.keys(gpaStandard).sort((a,b) => {
-          // If the GPA's associated with the two current letter grades are not equal, then compare them
-          if (gpaStandard[a] !== gpaStandard[b]) {
-            return gpaStandard[b] - gpaStandard[a];
-          }
-          // If they are equal, then compare the letter grade representations (while considering plus and minus signs)
-          return (b + ',').localeCompare(a + ',');
-        });
+        const sortedGpaStandard = sortGpaStandardKeys(gpaStandard);
         // Reconstruct the dropdown and rebuild the gpa config table
         gpaStandardBody.replaceChildren();
         for (const grade of sortedGpaStandard) {
@@ -1541,28 +1526,19 @@ if (document.title === 'Dashboard') {
             initialOption.selected = true;
             return;
           }
-          const courseID = RegExp(/row-(\d+)/g).exec(dropdown.parentElement.classList.toString())[1];
-          const storageOption = dropdown.querySelector(`option[class="${config.gpa?.[courseID].letter_grade}"]`);
+          const courseID = /row-(\d+)/.exec(dropdown.parentElement.classList.toString())[1];
+          const storageOption = dropdown.querySelector(`option[class="${config.gpa?.[courseID]?.letter_grade}"]`);
           if (storageOption !== null) {
             storageOption.selected = true;
             return;
           }
-          // Make sure to initialize the nested config.gpa object if it is not defined (using nullish coalescing assignment aka ??=)
-          // Also make sure not to reset the letter grade (if you do, then the grade will reset without the user knowing -- happens if user removes a configured letter grade that they are using)
+          // Initialize the nested config.gpa object if it is not defined
           config.gpa ??= {};
           config.gpa[courseID] ??= {};
           dropdown.querySelector(`option[class="blank"]`).selected = true;
         });
         document.querySelectorAll('.container-canvas-grades-pro .grid-container.special > .grid-item > select').forEach(elm => {
-          const dropdown = gradeDropdown.cloneNode(true);
-          // Replace AUTO option with NG option (NG -> No Grade)
-          const tmp = dropdown.querySelector('option[class="AUTO"]');
-          tmp.classList.replace('AUTO', 'NG');
-          tmp.textContent = 'NG';
-          dropdown.style.width = '70px';
-          // Re-append option to move it to the bottom
-          tmp.remove();
-          dropdown.appendChild(tmp);
+          const dropdown = createMissingGradeDropdown();
           // Replace old dropdown menu with the newly rebuilt one based on the new gpa standard
           elm.replaceWith(dropdown);
           const targetCourseName = dropdown.parentElement.previousElementSibling.previousElementSibling.previousElementSibling.firstElementChild.value.trim();
@@ -1572,7 +1548,7 @@ if (document.title === 'Dashboard') {
             storageOption.selected = true;
             return;
           }
-          config.gpa_missing ??= {};
+          config.gpa_missing ??= [];
           dropdown.querySelector(`option[class="blank"]`).selected = true;
         });
         gpaStandardInputMessage.textContent = '';
@@ -1626,7 +1602,7 @@ if (document.title === 'Dashboard') {
     minGpaContent.appendChild(closeButton.cloneNode(true));
     const findMinGpaRequired = function() {
       const desiredGpa = minGpaLeftSubContainer.querySelector('input').value;
-      if (!/^((\d+(\.(\d+)?)?)|(\.\d+))$/.test(desiredGpa.trim())) {
+      if (!NON_NEGATIVE_NUMBER.test(desiredGpa.trim())) {
         minGpaMessage.textContent = "Please use non-negative numerical values for your desired GPA";
         minGpaRequired.textContent = '';
         const oldTableContainer = minGpaContent.querySelector('#min-gpa-table-container');
@@ -1660,17 +1636,7 @@ if (document.title === 'Dashboard') {
         console.error('Zero credits were detected for the current term', window.semesters);
       }
       const minGpa = Math.max(0, Math.floor(1e3 * ((+desiredGpa * credits - qualityPoints) / window.semesters[currentSemesterId][2])) / 1e3);
-      const gpaStandardGrades = Object.keys(gpaStandard);
-      let maxLetterGrade = gpaStandardGrades[0];
-      for (const letterGrade of gpaStandardGrades) {
-        // If the GPA's associated with the two current letter grades are not equal, then compare them
-        if (gpaStandard[letterGrade] !== gpaStandard[maxLetterGrade]) {
-          maxLetterGrade = gpaStandard[letterGrade] > gpaStandard[maxLetterGrade] ? letterGrade : maxLetterGrade;
-          continue;
-        }
-        // If they are equal, then compare the letter grade representations (while considering plus and minus signs)
-        maxLetterGrade = (maxLetterGrade + ',').localeCompare(letterGrade + ',') > 1 ? maxLetterGrade : letterGrade;
-      }
+      const maxLetterGrade = getMaxLetterGrade(gpaStandard);
       minGpaRequired.textContent = Number(minGpa.toFixed(3)) + (gpaStandard[maxLetterGrade] < minGpa ? ' 😭' : (minGpa === 0 ? ' 🗿' : ''));
       // If the user cannot get their desired gpa or if they don't have to do anything to get it, then exit early
       if (gpaStandard[maxLetterGrade] < minGpa || minGpa === 0) {
@@ -1714,7 +1680,6 @@ if (document.title === 'Dashboard') {
       minGpaTable.appendChild(minGpaTableRow);
       // Create and configure the subcolumns (each credit count that you currently have)
       const creditsRow = document.createElement('tr');
-      // const credits of uniqueCourseCredits
       for (let i = 0; i < uniqueCourseCredits.length; i++) {
         const credits = uniqueCourseCredits[i];
         const creditsCell = document.createElement('td');
@@ -1769,7 +1734,7 @@ if (document.title === 'Dashboard') {
         findMinGpaRequired();
       }
     });
-    document.body.appendChild(popup);
+    document.body.appendChild(gpaCoursePopup);
     document.body.appendChild(gpaStandardPopup);
     document.body.appendChild(minGpaPopup);
     document.body.appendChild(missingCoursesPopup); 
@@ -1799,18 +1764,7 @@ if (document.title === 'Dashboard') {
         window.semesterDropdownValue = dropdown.options[dropdown.selectedIndex].value;
         dropdown.parentElement.textContent = dropdown.options[dropdown.selectedIndex].textContent;
         gpaSemesterEditIcon.classList.replace('fa-save', 'fa-edit');
-        let selectedSemesterData = window.semesters[window.semesterDropdownValue];
-        if (selectedSemesterData === undefined) {
-          const semesterName = window.semesterDropdownValue.slice(0,-8);
-          selectedSemesterData = window.semesters_missing[semesterName];
-          gpaSemesterValue.textContent = selectedSemesterData[0] === -1 ? '⚠️' : (selectedSemesterData[1] === 0 ? 'N/A' : (Math.floor(1e3 * selectedSemesterData[0] / selectedSemesterData[1]) / 1e3).toFixed(3));
-          semesterCreditsValue.textContent = selectedSemesterData[0] === -1 ? '' : (selectedSemesterData[1] + selectedSemesterData[2]) + ' Credits';
-          gpaSemesterError.textContent = selectedSemesterData[0] === -1 ? `Credit count is unknown for some ${semesterName} courses` : '';
-          return;
-        }
-        gpaSemesterValue.textContent = selectedSemesterData[1] === -1 ? '⚠️' : (selectedSemesterData[2] === 0 ? 'N/A' : (Math.floor(1e3 * selectedSemesterData[1] / selectedSemesterData[2]) / 1e3).toFixed(3));
-        semesterCreditsValue.textContent = selectedSemesterData[1] === -1 ? '' : (selectedSemesterData[2] + selectedSemesterData[3]) + ' Credits';
-        gpaSemesterError.textContent = selectedSemesterData[1] === -1 ? `Credit count is unknown for some ${selectedSemesterData[0]} courses` : '';
+        showSelectedSemesterGpa();
       } else { // Editing mode
         const dropdown = semestersDropdown.cloneNode(true);
         dropdown.selectedIndex = window.semesterDropdownIndex;
@@ -1819,45 +1773,17 @@ if (document.title === 'Dashboard') {
       }
     });
     // Modify this event listener for the class grades/credits config so that the dropdowns are all recloned (loop through them, and replace the children of the parent element with the newly created dropdown; dropdown needs to be changed during save)
-    gpaCalculatorEditConfig.addEventListener('click', () => {
-      gpaStandardPopup.classList.remove('active');
-      minGpaPopup.classList.remove('active');
-      missingCoursesPopup.classList.remove('active');
-      popup.classList.add('active');
-    });
-    gpaCalculatorEditStandard.addEventListener('click', () => {
-      popup.classList.remove('active');
-      minGpaPopup.classList.remove('active');
-      missingCoursesPopup.classList.remove('active');
-      gpaStandardPopup.classList.add('active');
-    });
-    gpaCalculatorMinGpa.addEventListener('click', () => {
-      popup.classList.remove('active');
-      gpaStandardPopup.classList.remove('active');
-      missingCoursesPopup.classList.remove('active');
-      minGpaPopup.classList.add('active');
-    });
-    gpaCalculatorMissingConfig.addEventListener('click', () => {
-      popup.classList.remove('active');
-      gpaStandardPopup.classList.remove('active');
-      minGpaPopup.classList.remove('active');
-      missingCoursesPopup.classList.add('active');
-    });
-    document.querySelectorAll('.close-btn').forEach(elm => {
-      elm.addEventListener('click', () => {
-        popup.classList.remove('active');
-        gpaStandardPopup.classList.remove('active');
-        minGpaPopup.classList.remove('active');
-        missingCoursesPopup.classList.remove('active');
-      });
-    });
+    const gpaPopups = [gpaCoursePopup, gpaStandardPopup, minGpaPopup, missingCoursesPopup];
+    const showGpaPopup = target => gpaPopups.forEach(gpaPopup => gpaPopup.classList.toggle('active', gpaPopup === target));
+    gpaCalculatorEditConfig.addEventListener('click', () => showGpaPopup(gpaCoursePopup));
+    gpaCalculatorEditStandard.addEventListener('click', () => showGpaPopup(gpaStandardPopup));
+    gpaCalculatorMinGpa.addEventListener('click', () => showGpaPopup(minGpaPopup));
+    gpaCalculatorMissingConfig.addEventListener('click', () => showGpaPopup(missingCoursesPopup));
+    gpaPopups.forEach(gpaPopup => gpaPopup.querySelectorAll('.close-btn').forEach(elm => elm.addEventListener('click', () => showGpaPopup(null))));
     window.addEventListener('keydown', event => {
       if (event.key === 'Escape') {
-        popup.classList.remove('active');
-        gpaStandardPopup.classList.remove('active');
-        minGpaPopup.classList.remove('active');
-        missingCoursesPopup.classList.remove('active');
-      } 
+        showGpaPopup(null);
+      }
     });
     saveChangesButton.addEventListener('click', async () => {
       // Store the values for your semester class credits and gpa scores "temporarily" (this object will replace the object at window.semesters if the input is good)
@@ -1870,7 +1796,7 @@ if (document.title === 'Dashboard') {
         const letterGrade = select.options[select.selectedIndex].textContent;
         const courseGpa = gpaStandard[letterGrade] ?? null;
         // Check if the data that was inputted is "bad"
-        if (!/^((\d+(\.(\d+)?)?)|(\.\d+))$/.test(credits)) {  
+        if (!NON_NEGATIVE_NUMBER.test(credits)) {  
           saveChangesLabel.classList.add('error');
           saveChangesLabel.textContent = 'Changes failed to save! Please use numerical values \u2265 0 for your credits';
           return;
@@ -1910,17 +1836,7 @@ if (document.title === 'Dashboard') {
       window.gpaErrorMessage = '';
       window.gpaBadCourses = new Set();
       // Get the max letter grade (grade associated with the highest gpa) for usage with courses that have no grade
-      const gpaStandardGrades = Object.keys(gpaStandard);
-      let maxLetterGrade = gpaStandardGrades[0];
-      for (const letterGrade of gpaStandardGrades) {
-        // If the GPA's associated with the two current letter grades are not equal, then compare them
-        if (gpaStandard[letterGrade] !== gpaStandard[maxLetterGrade]) {
-          maxLetterGrade = gpaStandard[letterGrade] > gpaStandard[maxLetterGrade] ? letterGrade : maxLetterGrade;
-          continue;
-        }
-        // If they are equal, then compare the letter grade representations (while considering plus and minus signs)
-        maxLetterGrade = (maxLetterGrade + ',').localeCompare(letterGrade + ',') > 1 ? maxLetterGrade : letterGrade;
-      }
+      const maxLetterGrade = getMaxLetterGrade(gpaStandard);
       window.courseNames = new Set();
       for await (const course of allCourses) {
         // Configure the semesters object (to store gpa data on each semester)
@@ -1952,7 +1868,7 @@ if (document.title === 'Dashboard') {
           // In the final base case, tmp is either '' (blank) or set
           return tmp === '' ? null : tmp;
         })() ?? await (async function() {
-          const grade = window.computedGrades[course.id.toString()]?.[0] ?? (await getCourseGrade(course, courseConfig, null, null, false))[0];
+          const grade = window.computedGrades[course.id.toString()] ?? (await getCourseGrade(course, courseConfig, null, null, false))[0];
           if (grade === 'NG' && !autoFlag) {
             return null; 
           }
@@ -2064,19 +1980,22 @@ if (document.title === 'Dashboard') {
     // Show the gpa card after it has been fully configured (only if show mode is enabled)
     if (config.gpa_card?.show_card !== false) {
       gpaCard.style.display = '';
-    }    
+    }
+  })
+  .catch(err => {
+    console.error('An error has occurred while loading the dashboard', err);
   });
 } else if (/courses\/\d+\/grades/.test(window.location.href)) { // Course grades page
   // Check if the page is valid (if the page is an actual courses' grade page)
   if (document.getElementById('not_found_root') !== null) {
-    thisFunctionDoesNotExistAndWasCreatedWithTheOnlyPurposeOfStopJavascriptExecutionOfAllTypesIncludingCatchAndAnyArbitraryWeirdScenario();
+    throw new Error('CanvasGradesPro: not a course grades page');
   }
   // Adjust the zoom of the page to prevent overlapping from the assignments table and the right side of the page
   const zoomFactor = '83%';
   document.getElementById('assignments').style.zoom = zoomFactor;
   document.getElementById('right-side-wrapper').style.zoom = zoomFactor;
   // Extract the course ID from the URL
-  const courseID = RegExp(/courses\/(\d+)\/grades/).exec(window.location.href)[1];
+  const courseID = /courses\/(\d+)\/grades/.exec(window.location.href)[1];
   Promise.resolve(getConfig())
   .then(data => {
    // Get class-specific config
@@ -2103,19 +2022,7 @@ if (document.title === 'Dashboard') {
     const course = await (await fetch(`/api/v1/courses/${courseID}?include[]=total_scores`, {
       method: 'GET'
     })).json();
-    const courseAssignments = [];
-    let assignmentsPage = 1;
-    while (true) {
-      const response = await fetch(`/api/v1/courses/${courseID}/assignment_groups?per_page=100&include[]=assignments&include[]=score_statistics&include[]=overrides&include[]=submission&page=${assignmentsPage}`);
-      const assignments = await response.json();
-      if (assignments.length === 0) {
-        break;
-      }
-      for (const assignment of assignments) {
-        courseAssignments.push(assignment);
-      }
-      assignmentsPage++;
-    }
+    const courseAssignments = await fetchAllPages(`/api/v1/courses/${courseID}/assignment_groups?per_page=100&include[]=assignments&include[]=score_statistics&include[]=overrides&include[]=submission`);
     if (course.grading_standard_id !== null && course.grading_standard_id !== undefined) {
       classGradingStandard = await retrieveGradingStandard(course.id, course.grading_standard_id);
     }
@@ -2537,6 +2444,15 @@ if (document.title === 'Dashboard') {
       resetWeightsContainer.style.display = 'inline-block';
       window.editing = true;
     });
+    // Exit weights edit mode
+    const closeWeightEditor = function() {
+      weightsErrorMessage.style.display = 'none';
+      saveWeightChanges.style.display = 'none';
+      weightConfig.style.display = 'none';
+      editTable.style.display = 'flex';
+      resetWeightsContainer.style.display = 'none';
+      window.editing = false;
+    }
     saveWeightChanges.addEventListener('click', async () => {
       if (window.editing !== true) {
         return;
@@ -2548,13 +2464,8 @@ if (document.title === 'Dashboard') {
         table.style.display = 'none';
         weightConfig.textContent = "Use weighting for this course";
         tableHeader.textContent = "Course assignments are not weighted.";
-        weightsErrorMessage.style.display = 'none';
-        saveWeightChanges.style.display = 'none';
-        weightConfig.style.display = 'none';
-        editTable.style.display = 'flex';
-        resetWeightsContainer.style.display = 'none';
+        closeWeightEditor();
         window.editMode = false;
-        window.editing = false;
         config.use_weighting = false;
         await saveConfig(config, courseID);
         await updateGradeDisplay(null, window.previousGradeConfig);
@@ -2573,12 +2484,7 @@ if (document.title === 'Dashboard') {
           gradeCell.replaceChildren();
           gradeCell.textContent = groupWeights[row.firstElementChild.textContent] + '%';
         }
-        weightsErrorMessage.style.display = 'none';
-        saveWeightChanges.style.display = 'none';
-        weightConfig.style.display = 'none';
-        editTable.style.display = 'flex';
-        resetWeightsContainer.style.display = 'none';
-        window.editing = false;
+        closeWeightEditor();
         // Delete weights from config (use config set by course unless user explicitly sets weights)
         delete config.weights
         config.use_weighting = true;
@@ -2589,13 +2495,8 @@ if (document.title === 'Dashboard') {
       // Check if no weighting mode is toggled
       // If so, then save that rule and do not save anything else
       if (!window.editMode) {
-        weightsErrorMessage.style.display = 'none';
-        saveWeightChanges.style.display = 'none';
-        weightConfig.style.display = 'none';
-        editTable.style.display = 'flex';
         tableHeader.textContent = "Course assignments are not weighted.";
-        resetWeightsContainer.style.display = 'none';
-        window.editing = false;
+        closeWeightEditor();
         config.use_weighting = false;
         await saveConfig(config, courseID);
         await updateGradeDisplay(null, window.previousGradeConfig);
@@ -2650,12 +2551,7 @@ if (document.title === 'Dashboard') {
         console.error('Scaled sum is not 100. Something went wrong', scaledWeightSum);
       }
       // Hide error message on success
-      weightsErrorMessage.style.display = 'none';
-      saveWeightChanges.style.display = 'none';
-      weightConfig.style.display = 'none';
-      editTable.style.display = 'flex';
-      resetWeightsContainer.style.display = 'none';
-      window.editing = false;
+      closeWeightEditor();
       // If no weighting existing before save or if not all weights are the same, then save weighting normally, else drop weighting from config
       const changesMade = !course.apply_assignment_group_weights || !courseAssignments.every(group => 
         group.group_weight === values[group.name]
@@ -2668,7 +2564,6 @@ if (document.title === 'Dashboard') {
       config.use_weighting = true;
       // Save config and update the grade display
       await saveConfig(config, courseID);
-      // TODO Consider changing this so that only the weights have to be recalculated (store assignment group calculations in a window variable)
       await updateGradeDisplay(null, window.previousGradeConfig);
     });
     weightConfig.addEventListener('click', () => {
@@ -2760,6 +2655,18 @@ if (document.title === 'Dashboard') {
       viewGradingStandard.style.display = 'none';
       window.gradingStandardMode = 'set';
     });
+    // Exit grading standard edit mode
+    const closeGradingStandardEditor = function() {
+      gradingStandardErrorMessage.textContent = '';
+      saveGradingStandard.style.display = 'none';
+      gradingStandardCheckboxes.style.display = 'none';
+      gradingStandardErrorMessage.style.display = 'none';
+      gradingStandardTable.style.display = 'none';
+      setGradingStandard.style.display = 'flex';
+      viewGradingStandard.style.display = 'flex';
+      gradingStandardTable.firstElementChild.firstElementChild.children[1].textContent = 'Grading Scales';
+      window.gradingStandardMode = null;
+    }
     saveGradingStandard.addEventListener('click', async () => {
       // only 'set' is acceptable
       if (window.gradingStandardMode !== 'set') {
@@ -2772,15 +2679,7 @@ if (document.title === 'Dashboard') {
         const fallbackGradingStandard = classGradingStandard ?? globalConfig.default_grading_standard ?? default_grading_standard;
         gradingStandardTable.appendChild(loadGradingStandardTable(fallbackGradingStandard));
         // Perform additional updates before saving
-        gradingStandardErrorMessage.textContent = '';
-        saveGradingStandard.style.display = 'none';
-        gradingStandardCheckboxes.style.display = 'none';
-        gradingStandardErrorMessage.style.display = 'none';
-        gradingStandardTable.style.display = 'none';
-        setGradingStandard.style.display = 'flex';
-        viewGradingStandard.style.display = 'flex';
-        gradingStandardTable.firstElementChild.firstElementChild.children[1].textContent = 'Grading Scales';
-        window.gradingStandardMode = null;
+        closeGradingStandardEditor();
         // If the grading standard was being viewed before editing, then show the grading standard table  
         gradingStandardTable.style.display = window.gradingStandardViewMode ? 'inline-table' : 'none'; 
         // Remove grading standard then save config (important to remove since other code relies on nullish coalescing, which doesn't propagate on empty objects)
@@ -2832,15 +2731,7 @@ if (document.title === 'Dashboard') {
         gradeCell.dataset.lower_bound = gradeCell.firstElementChild.value;
         gradingStandardBody.appendChild(row);
       }
-      gradingStandardErrorMessage.textContent = '';
-      saveGradingStandard.style.display = 'none';
-      gradingStandardCheckboxes.style.display = 'none';
-      gradingStandardErrorMessage.style.display = 'none';
-      gradingStandardTable.style.display = 'none';
-      setGradingStandard.style.display = 'flex';
-      viewGradingStandard.style.display = 'flex';
-      gradingStandardTable.firstElementChild.firstElementChild.children[1].textContent = 'Grading Scales';
-      window.gradingStandardMode = null;
+      closeGradingStandardEditor();
       // If the grading standard was being viewed before editing, then show the grading standard table
       if (window.gradingStandardViewMode) {
         toggleGradingStandardTable();
@@ -3019,7 +2910,6 @@ if (document.title === 'Dashboard') {
       }
       const dropRules = {};
       const dropsRows = document.querySelectorAll('#drops_table tbody tr');
-      let marker = 0;
       for (const row of dropsRows) {
         const groupName = row.firstElementChild.textContent;
         // If reset drops is set, then upate the input value to the count provided by the class rules, or 0 if there isn't a given value 
@@ -3037,7 +2927,6 @@ if (document.title === 'Dashboard') {
           return;
         }
         dropRules[groupName] = [lowDrops, highDrops];
-        marker++;
       }
       dropsErrorMessage.textContent = '';
       dropsErrorMessage.style.display = 'none';
@@ -3131,11 +3020,10 @@ if (document.title === 'Dashboard') {
       await updateGradeDisplay(null, whatIfScoresDict);
     });
     hideWhatIfScores.addEventListener('click', async () => {
-      // Revert to original scores (use values stored in window.courseGrades)
+      // Revert to original scores from the assignment data loaded with the page
       showWhatIfScores.parentElement.style.display = 'block';
       hideWhatIfScores.parentElement.style.display = 'none';
       // Update grades using normal grade calculation 
-      // TODO Consider storing the original data so that you can easily revert back
       window.previousGradeConfig = null;
       await updateGradeDisplay(null);
     });
@@ -3370,14 +3258,13 @@ if (document.title === 'Dashboard') {
           gradeCell.classList.remove('grade');
           // Update points display
           if (window.coursePoints !== null) {
-            // const groupScore = (+map[groupName].score.toLocaleString('en-US')).toFixed(2);
             grade.querySelector('span.possible.points_possible').textContent = `${(+window.coursePoints[0].toLocaleString('en-US')).toFixed(2)} / ${(+window.coursePoints[1].toLocaleString('en-US')).toFixed(2)}`;
           }
         }
       });
     }
     
-    const popup = document.createElement('div');
+    const minGradePopup = document.createElement('div');
     const overlay = document.createElement('div');
     const content = document.createElement('div');
     const closeButton = document.createElement('span');
@@ -3396,7 +3283,7 @@ if (document.title === 'Dashboard') {
     const minGradePercentage = document.createElement('span');
     const calculateButton = document.createElement('button');
 
-    popup.classList.add('popup-canvas-grades-pro');
+    minGradePopup.classList.add('popup-canvas-grades-pro');
     overlay.classList.add('overlay');
     content.classList.add('content');
     closeButton.classList.add('close-btn');
@@ -3444,9 +3331,9 @@ if (document.title === 'Dashboard') {
     content.appendChild(popupSubtitle);
     content.appendChild(popupContainer);
     content.appendChild(calculateButton);
-    popup.appendChild(overlay);
-    popup.appendChild(content);
-    document.body.appendChild(popup);
+    minGradePopup.appendChild(overlay);
+    minGradePopup.appendChild(content);
+    document.body.appendChild(minGradePopup);
 
     const togglePopup = async function(event) {
       // Hide the minimum grade required result
@@ -3456,8 +3343,8 @@ if (document.title === 'Dashboard') {
       popupSubtitle.textContent = '\u200b';
       desiredGradeErrorMessage.style.display = 'none';
       desiredGradeWarningMessage.style.display = 'none';
-      popup.classList.toggle('active');
-      if (!popup.classList.contains('active')) {
+      minGradePopup.classList.toggle('active');
+      if (!minGradePopup.classList.contains('active')) {
         window.minGradeAssignment = null;
         window.minGradeAssignmentName = null;
         return;
@@ -3467,7 +3354,7 @@ if (document.title === 'Dashboard') {
         elm = elm.parentElement;
       }
       // Save the ID of the assignment that is being used for the "min grade" operation
-      window.minGradeAssignment = +RegExp(/\d+/).exec(elm.id)[0];
+      window.minGradeAssignment = +(/\d+/.exec(elm.id)[0]);
       // Collect and store information about the "min grade" assignment: [assignment_name, assignment_group_id, assignment_point_total]
       const assignment = (await (await fetch(`/api/v1/courses/${courseID}/assignments/${window.minGradeAssignment}`)).json());
       window.minGradeAssignmentData = [assignment.name.trim(), assignment.assignment_group_id, assignment.points_possible];
@@ -3477,8 +3364,8 @@ if (document.title === 'Dashboard') {
 
     closeButton.addEventListener('click', togglePopup);
     window.addEventListener('keydown', event => {
-      if (popup.classList.contains('active') && event.key === 'Escape') {
-        popup.classList.remove('active');
+      if (minGradePopup.classList.contains('active') && event.key === 'Escape') {
+        minGradePopup.classList.remove('active');
       } 
     });
 
@@ -3516,9 +3403,9 @@ if (document.title === 'Dashboard') {
       try {
         // Store assignments and other data for each category
         const map = {}; 
-        // Store the group id, score, total, and other necessary information for the "min grade" operation (the assignment ID is stored at window.minGradeAssignment)
-        // TODO Adjust this array so that the score is not stored
-        const minGradeArr = [null,null,null,null,null,null,null]; // [group_id, score, total, drops: null (no drops) OR {low_drops, high_drops}, group_weighting, group_name, set: never_drop]
+        // Store the group id, assignment total, and other necessary information for the "min grade" operation (the assignment ID is stored at window.minGradeAssignment)
+        // minGradeArr[1] is UNUSED
+        const minGradeArr = [null,null,null,null,null,null,null]; // [group_id, UNUSED, total, drops: null (no drops) OR {low_drops, high_drops}, group_weighting, group_name, set: never_drop]
         // Check if ungraded/missing assignments are included in the grade calculation process
         const gradedAssignmentsOnly = document.getElementById('only_consider_graded_assignments')?.checked ?? true;
         if (config.use_weighting === undefined) {
@@ -3558,7 +3445,6 @@ if (document.title === 'Dashboard') {
             }
             // Check if the current assignment is the current assignment for the "min grade" operation
             if (window.minGradeAssignment === assignment.id) {
-              minGradeArr[1] = assignment.submission.score ?? null;
               minGradeArr[4] = map[group.name].weight;
               minGradeArr[5] = group.name;
               continue;
@@ -3601,51 +3487,7 @@ if (document.title === 'Dashboard') {
             minGradeArr[6] = new Set(group.rules.never_drop ?? []);
             continue;
           }
-          // Sort the assignments by simulating the grade after dropping the current assignment (higher grade after drop is placed earlier)
-          map[group.name].grades.sort((a,b) => {
-            const dec_a = (map[group.name].score - a.score) / (map[group.name].total - a.total);
-            const dec_b = (map[group.name].score - b.score) / (map[group.name].total - b.total);
-            return dec_b - dec_a;
-          });
-          // Create a set of the assignments that should not be dropped
-          const neverDrop = new Set(group.rules.never_drop ?? []);
-          // Perform the low drops
-          for (let i = 0; i < lowDrops; i++) {
-            if (totalAssignments === 0) {
-              break;
-            }
-            const assignment = map[group.name].grades[0];
-            // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
-            if (neverDrop.has(assignment.id)) {
-              map[group.name].grades.shift();
-              // Decrement i since the current assignment is not actually being dropped
-              i--;
-              continue;
-            }
-            map[group.name].score -= assignment.score;
-            map[group.name].total -= assignment.total;
-            // Remove elements from grades array
-            map[group.name].grades.shift();
-          }
-          // Perform the high drops
-          for (let i = 0; i < highDrops; i++) {
-            if (totalAssignments === 0) {
-              break;
-            }
-            const assignment = map[group.name].grades[totalAssignments-1];
-            // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
-            if (neverDrop.has(assignment.id)) {
-              map[group.name].grades.pop();
-              // Decrement i since the current assignment is not actually being dropped
-              i--;
-              continue;
-            }
-            map[group.name].score -= assignment.score;
-            map[group.name].total -= assignment.total;
-            map[group.name].grades.pop();
-          }
-          // Re-calculate the decimal for the current group after applying drops
-          map[group.name].decimal = map[group.name].total === 0 ? 0 : Math.round((1e4 * map[group.name].score) / map[group.name].total) / 1e4;
+          applyDrops(map[group.name], lowDrops, highDrops, group.rules.never_drop);
         }
 
         // Get the minimum grade needed for the current group to obtain the desired group in the current course
@@ -3693,11 +3535,7 @@ if (document.title === 'Dashboard') {
         // Check if drops were used for the current group, and if so, then perform the correct operation for finding the "min grade"
         if (minGradeArr[3] != null) {
           // Sort the min grades array
-          map[minGradeArr[5]].grades.sort((a,b) => {
-            const dec_a = (map[minGradeArr[5]].score - a.score) / (map[minGradeArr[5]].total - a.total);
-            const dec_b = (map[minGradeArr[5]].score - b.score) / (map[minGradeArr[5]].total - b.total);
-            return dec_b - dec_a;
-          });
+          sortByDropImpact(map[minGradeArr[5]]);
           const gradesArr = map[minGradeArr[5]].grades;
           // Remove all assignments that are "never dropped" from the grades array (makes processing much easier)
           // Removal of the assignments in being done in place
@@ -3728,7 +3566,6 @@ if (document.title === 'Dashboard') {
           })();
           let activeScore = map[minGradeArr[5]].score;
           let activeTotal = map[minGradeArr[5]].total;
-          //
           // Check if the current assignment is not a never drop assignment
           const canMinGradeDrop = !minGradeArr[6].has(window.minGradeAssignment);
           // minGradeArr[3]: [low_drops, high_drops]
@@ -3760,7 +3597,8 @@ if (document.title === 'Dashboard') {
           const startIdx = Math.max(0, minGradeArr[3][0] - 1);
           const finishIdx = gradesArr.length - minGradeArr[3][1];
 
-          // TODO Change this since iterating through the entire window is not actually necessary (the assignment is either a low drop, a high drop, or normal) [only a max of 3 cases for the "min grade"]
+          // Potential optimization: only 3 cases exist (low drop, kept assignment, high drop)
+          // The current loop is simpler than cases and the window is expected to be small
           for (let i = startIdx; i < finishIdx; i++) {
             // Check if the "min grade" assignment should be considered as a low drop (in terms of the active score and total)
             // Also check if the "min grade" assignment should be considered as a high drop
@@ -3857,9 +3695,11 @@ if (document.title === 'Dashboard') {
     });
     // Set the grade display initially (when the course page loads in)
     await updateGradeDisplay(null, window.previousGradeConfig);
+  })
+  .catch(err => {
+    console.error('An error has occurred on the course grades page', err);
   });
 }
-// TODO Confirm that this is working properly and that there are no errors / failure cases
 // Calculate the percentile that your grade lies in (this is an approximate value and will not be entirely correct due to the lack of data)
 const calculatePercentile = function(q1, q2, q3, grade, low, high) {
   let percentile;
@@ -3893,9 +3733,13 @@ const calculatePercentile = function(q1, q2, q3, grade, low, high) {
     percentile = 75 + ((grade - q3) / (high - q3)) * 25;
   }
   // Round the percentile to two decimal places before returning
-  // Also bound sthe percentile in the following range: [0.01, 0.99]
+  // Also bound sthe percentile in the following range: [0.01, 99.99]
   return Math.max(0.01, Math.min(99.99, Math.round(100 * percentile) / 100));
 }
+
+// Class statistics computed by getCourseGrade: [key for group map, matching field in Canvas's score_statistics]
+// Order matters as this is used with getCourseGrade
+const STAT_FIELDS = [['q1', 'lower_q'], ['q2', 'median'], ['q3', 'upper_q'], ['mean', 'mean'], ['low', 'min'], ['high', 'max']];
 
 /**
  * If any config is set, then the grade is calculated manually
@@ -3909,19 +3753,7 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
   }
   // If the assignment groups have not been provided, then fetch them and update the groups variable
   if (groups === null) {
-    groups = [];
-    let assignmentsPage = 1;
-    while (true) {
-      const response = await fetch(`/api/v1/courses/${course.id}/assignment_groups?per_page=100&include[]=assignments&include[]=score_statistics&include[]=overrides&include[]=submission&page=${assignmentsPage}`);
-      const assignments = await response.json();
-      if (assignments.length === 0) {
-        break;
-      }
-      for (const assignment of assignments) {
-        groups.push(assignment);
-      }
-      assignmentsPage++;
-    }
+    groups = await fetchAllPages(`/api/v1/courses/${course.id}/assignment_groups?per_page=100&include[]=assignments&include[]=score_statistics&include[]=overrides&include[]=submission`);
   }
   try {
     // Check if ungraded/missing assignments are included in the grade calculation process
@@ -3952,24 +3784,9 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
       map[group.name].weight = is_course_unweighted ? 1 : (validWeighting ? config.weights[group.name] : group.group_weight);
       map[group.name].grades = new Array();
       if (getCourseStatistics) {
-        map[group.name].q1 = {};
-        map[group.name].q1.score = 0;
-        map[group.name].q1.grades = new Array();
-        map[group.name].q2 = {}; // q2 = median
-        map[group.name].q2.score = 0;
-        map[group.name].q2.grades = new Array();
-        map[group.name].q3 = {};
-        map[group.name].q3.score = 0;
-        map[group.name].q3.grades = new Array();
-        map[group.name].mean = {};
-        map[group.name].mean.score = 0;
-        map[group.name].mean.grades = new Array();
-        map[group.name].low = {};
-        map[group.name].low.score = 0;
-        map[group.name].low.grades = new Array();
-        map[group.name].high = {};
-        map[group.name].high.score = 0;
-        map[group.name].high.grades = new Array();
+        for (const [stat] of STAT_FIELDS) {
+          map[group.name][stat] = { score: 0, total: 0, grades: [] };
+        }
       }
       for (const assignment of group.assignments) {
         // Do not include assignments that are not counted towards your final grade (also don't include assignments that have not been graded)
@@ -3997,38 +3814,12 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
           total,
         });
         if (getCourseStatistics && statistics !== undefined) {
-          // Add grade to the list of grades for each stat
-          map[group.name].q1.grades.push({
-            score: statistics.lower_q,
-            total,
-          });
-          map[group.name].q2.grades.push({
-            score: statistics.median,
-            total,
-          });
-          map[group.name].q3.grades.push({
-            score: statistics.upper_q,
-            total,
-          });
-          map[group.name].mean.grades.push({
-            score: statistics.mean,
-            total,
-          });
-          map[group.name].low.grades.push({
-            score: statistics.min,
-            total,
-          });
-          map[group.name].high.grades.push({
-            score: statistics.max,
-            total,
-          });
           // Contribute to the score total of all of the grades for each stat
-          map[group.name].q1.score += statistics.lower_q;
-          map[group.name].q2.score += statistics.median;
-          map[group.name].q3.score += statistics.upper_q;
-          map[group.name].mean.score += statistics.mean;
-          map[group.name].low.score += statistics.min;
-          map[group.name].high.score += statistics.max;
+          for (const [stat, field] of STAT_FIELDS) {
+            map[group.name][stat].grades.push({ id: assignment.id, score: statistics[field], total });
+            map[group.name][stat].score += statistics[field];
+            map[group.name][stat].total += total;
+          }
           statsGroupTotal += total;
         }
         groupScore += score;
@@ -4040,18 +3831,6 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
       map[group.name].decimal = groupTotal === 0 ? 0 : groupScore / groupTotal;
       if (getCourseStatistics) {
         map[group.name].statsTotal = statsGroupTotal;
-        map[group.name].q1.total = statsGroupTotal;
-        map[group.name].q2.total = statsGroupTotal;
-        map[group.name].q3.total = statsGroupTotal;
-        map[group.name].mean.total = statsGroupTotal;
-        map[group.name].low.total = statsGroupTotal;
-        map[group.name].high.total = statsGroupTotal;
-        map[group.name].q1.decimal = statsGroupTotal === 0 ? 0 : map[group.name].q1.score / statsGroupTotal;
-        map[group.name].q2.decimal = statsGroupTotal === 0 ? 0 : map[group.name].q2.score / statsGroupTotal;
-        map[group.name].q3.decimal = statsGroupTotal === 0 ? 0 : map[group.name].q3.score / statsGroupTotal;
-        map[group.name].mean.decimal = statsGroupTotal === 0 ? 0 : map[group.name].mean.score / statsGroupTotal;
-        map[group.name].low.decimal = statsGroupTotal === 0 ? 0 : map[group.name].low.score / statsGroupTotal;
-        map[group.name].high.decimal = statsGroupTotal === 0 ? 0 : map[group.name].high.score / statsGroupTotal;
       }
     }
     // Remove 'dropped' class from all rows that currently have it (re-apply the 'dropped' class manually)
@@ -4065,65 +3844,24 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
       if (lowDrops === 0 && highDrops === 0) {
         continue;
       }
-      // Sort the assignments by simulating the grade after dropping the current assignment (higher grade after drop is placed earlier)
-      map[group.name].grades.sort((a,b) => {
-        const dec_a = (map[group.name].score - a.score) / (map[group.name].total - a.total);
-        const dec_b = (map[group.name].score - b.score) / (map[group.name].total - b.total);
-        return dec_b - dec_a;
+      applyDrops(map[group.name], lowDrops, highDrops, group.rules.never_drop, assignment => {
+        // Apply dropped UI by adding the 'dropped' class to the assignment row that is being dropped (uses assignment ID)
+        if (document.title !== 'Dashboard') {
+          document.getElementById(`submission_${assignment.id}`).classList.add('dropped');
+        }
       });
-      // Create a set of the assignments that should not be dropped
-      const neverDrop = new Set(group.rules.never_drop ?? []);
-      // Perform the low drops
-      for (let i = 0; i < lowDrops; i++) {
-        if (totalAssignments === 0) {
-          break;
-        }
-        const assignment = map[group.name].grades[0];
-        // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
-        if (neverDrop.has(assignment.id)) {
-          map[group.name].grades.shift();
-          // Decrement i since the current assignment is not actually being dropped
-          i--;
-          continue;
-        }
-        // Decrease the score and total properties
-        map[group.name].score -= assignment.score;
-        map[group.name].total -= assignment.total;
-        // Remove elements from grades array
-        map[group.name].grades.shift();
-        // Apply dropped UI by adding the 'dropped' class to the assignment row that is being dropped (uses assignment ID)
-        if (document.title !== 'Dashboard') {
-          document.getElementById(`submission_${assignment.id}`).classList.add('dropped');
+      if (getCourseStatistics && map[group.name].statsTotal !== 0) {
+        for (const [stat] of STAT_FIELDS) {
+          const statData = map[group.name][stat];
+          const [statLow, statHigh] = validateDropCounts(lowDrops, highDrops, statData.grades.length);
+          applyDrops(statData, statLow, statHigh, group.rules.never_drop);
         }
       }
-      // Perform the high drops
-      for (let i = 0; i < highDrops; i++) {
-        if (totalAssignments === 0) {
-          break;
-        }
-        const assignment = map[group.name].grades[totalAssignments-1];
-        // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
-        if (neverDrop.has(assignment.id)) {
-          map[group.name].grades.pop();
-          // Decrement i since the current assignment is not actually being dropped
-          i--;
-          continue;
-        }
-        map[group.name].score -= assignment.score;
-        map[group.name].total -= assignment.total;
-        map[group.name].grades.pop();
-        // Apply dropped UI by adding the 'dropped' class to the assignment row that is being dropped (uses assignment ID)
-        if (document.title !== 'Dashboard') {
-          document.getElementById(`submission_${assignment.id}`).classList.add('dropped');
-        }
-      }
-      // Re-calculate the decimal for the current group after applying drops
-      map[group.name].decimal = map[group.name].total === 0 ? 0 : Math.round((1e4 * map[group.name].score) / map[group.name].total) / 1e4;
     }
     // Update group total rows at the bottom of the table
     const groupTotals = document.querySelectorAll('.group_total');
     for (const row of groupTotals) {
-      const groupID = RegExp(/\d+/).exec(row.id)[0];
+      const groupID = /\d+/.exec(row.id)[0];
       const groupName = groupMap[groupID];
       const groupScore = groupName === undefined ? '0.00' : (+map[groupName].score.toLocaleString('en-US')).toFixed(2);
       const groupTotal = groupName === undefined ? '0.00' : (+map[groupName].total.toLocaleString('en-US')).toFixed(2);
@@ -4136,7 +3874,8 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
     let completeTotal = 0;
     // If the course is unweighted, then compute the grade (and statistics grades too if applicable)
     if (is_course_unweighted) {
-    const stats = { q1: [0,0], q2: [0,0], q3: [0,0], mean: [0,0], low: [0,0], high: [0,0] };
+      const stats = Object.fromEntries(STAT_FIELDS.map(([stat]) => [stat, 0]));
+      const statTotals = Object.fromEntries(STAT_FIELDS.map(([stat]) => [stat, 0]));
       for (const group of groups) {
         // Compute score and total for your grade
         completeScore += map[group.name].score;
@@ -4146,73 +3885,52 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
           continue;
         }
         // Compute the score and total for the class statistics
-        stats.q1[0] += map[group.name].q1.score;
-        stats.q2[0] += map[group.name].q2.score;
-        stats.q3[0] += map[group.name].q3.score;
-        stats.mean[0] += map[group.name].mean.score;
-        stats.low[0] += map[group.name].low.score;
-        stats.high[0] += map[group.name].high.score;
-        stats.q1[1] += map[group.name].q1.total;
-        stats.q2[1] += map[group.name].q2.total;
-        stats.q3[1] += map[group.name].q3.total;
-        stats.mean[1] += map[group.name].mean.total;
-        stats.low[1] += map[group.name].low.total;
-        stats.high[1] += map[group.name].high.total;
+        for (const [stat] of STAT_FIELDS) {
+          stats[stat] += map[group.name][stat].score;
+          statTotals[stat] += map[group.name][stat].total;
+        }
       }
       window.coursePoints = [completeScore, completeTotal];
       // If there are no grades contributing to the class statistics, then return -1 
       // Grades are all rounded to 2 decimal places 
       return [completeTotal === 0 ? 'NG' : +((100 * completeScore / completeTotal).toFixed(2))]
-      .concat(stats.q1[1] === 0 ? new Array(6).fill(-1) : [
-        +((100 * stats.q1[0] / stats.q1[1]).toFixed(2)),
-        +((100 * stats.q2[0] / stats.q2[1]).toFixed(2)),
-        +((100 * stats.q3[0] / stats.q3[1]).toFixed(2)),
-        +((100 * stats.mean[0] / stats.mean[1]).toFixed(2)),
-        +((100 * stats.low[0] / stats.low[1]).toFixed(2)),
-        +((100 * stats.high[0] / stats.high[1]).toFixed(2))
-      ]);
+      .concat(STAT_FIELDS.map(([stat]) => statTotals[stat] === 0 ? -1 : +((100 * stats[stat] / statTotals[stat]).toFixed(2))));
     }
     let classScore = 0;
     let weightTotal = 0;
-    let statsWeightTotal = 0;
-    const stats = { q1: 0, q2: 0, q3: 0, mean: 0, low: 0, high: 0 };
+    const stats = Object.fromEntries(STAT_FIELDS.map(([stat]) => [stat, 0]));
+    const statWeights = Object.fromEntries(STAT_FIELDS.map(([stat]) => [stat, 0]));
     for (const group of groups) {
-      // If there are no grades available in this group, then don't process this group
-      if (map[group.name].total === 0) {
-        continue;
-      }
       // Compute the class score while considering weighting
-      classScore += (map[group.name].score * map[group.name].weight / map[group.name].total);
-      // Keep track of the total weight being used for your grade
-      weightTotal += map[group.name].weight;
-        // If the statsTotal is 0, then don't continue to compute this group
+      if (map[group.name].total !== 0) {
+        classScore += (map[group.name].score * map[group.name].weight / map[group.name].total);
+        // Keep track of the total weight being used for your grade
+        weightTotal += map[group.name].weight;
+      }
+      // If the statsTotal is 0, then don't continue to compute this group
       if (!getCourseStatistics || map[group.name].statsTotal === 0) {
         continue;
       }
-      // Keep track of the total weight being used for the class statistics
-      statsWeightTotal += map[group.name].weight;
       // Compute the grades for class statistics while considering weighting
-      stats.q1 += (map[group.name].q1.score * map[group.name].weight / map[group.name].q1.total);
-      stats.q2 += (map[group.name].q2.score * map[group.name].weight / map[group.name].q2.total);
-      stats.q3 += (map[group.name].q3.score * map[group.name].weight / map[group.name].q3.total)
-      stats.mean += (map[group.name].mean.score * map[group.name].weight / map[group.name].mean.total);
-      stats.low += (map[group.name].low.score * map[group.name].weight / map[group.name].low.total);
-      stats.high += (map[group.name].high.score * map[group.name].weight / map[group.name].high.total);
+      for (const [stat] of STAT_FIELDS) {
+        const statTotal = map[group.name][stat].total;
+        if (statTotal === 0) {
+          continue;
+        }
+        // Keep track of the total weight being used for the class statistics
+        statWeights[stat] += map[group.name].weight;
+        stats[stat] += (map[group.name][stat].score * map[group.name].weight / statTotal);
+      }
     }
     // Compute scalars for determining how to scale your grade and the class statistics grades 
     // Solves the issue of having assignment groups with 0 entries being stored as a 0
     const k = weightTotal === 0 ? 0 : 100 / weightTotal;
-    const statsK = statsWeightTotal === 0 ? 0 : 100 / statsWeightTotal;
     // Grades are all rounded to 2 decimal places 
     return [k === 0 ? 'NG' : +((k * classScore).toFixed(2))]
-    .concat(statsK === 0 ? new Array(6).fill(-1) : [
-      +((statsK * stats.q1).toFixed(2)),
-      +((statsK * stats.q2).toFixed(2)),
-      +((statsK * stats.q3).toFixed(2)),
-      +((statsK * stats.mean).toFixed(2)),
-      +((statsK * stats.low).toFixed(2)),
-      +((statsK * stats.high).toFixed(2))
-    ]);
+    .concat(STAT_FIELDS.map(([stat]) => {
+      const statsK = statWeights[stat] === 0 ? 0 : 100 / statWeights[stat];
+      return statsK === 0 ? -1 : +((statsK * stats[stat]).toFixed(2));
+    }));
   } catch (err) {
     console.error(`An error has occured when calculating the course grade for ${course.course_code}`, err);
   } 
