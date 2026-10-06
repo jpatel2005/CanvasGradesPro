@@ -211,7 +211,7 @@ const findOptimalDrops = function(assignments, dropCount, neverDropIds, maximize
     }
   }
   // Compute ratios for each assignment
-  const ratios = pointed.map(assignment => assignment.score / assignment.total).sort();
+  const ratios = pointed.map(assignment => assignment.score / assignment.total).sort((a,b) => a-b);
   // Determine the upper and lower bounds for the search interval
   let qLow = ratios[0];
   let qHigh = ratios[ratios.length-1];
@@ -230,7 +230,12 @@ const findOptimalDrops = function(assignments, dropCount, neverDropIds, maximize
     // Sort by score, while considering direction based on type of drop
     ranked.sort((a,b) => {
       const diff = maximizeRetained ? b[0] - a[0] : a[0] - b[0];
-      return diff !== 0 ? diff : Number(a[1].id) - Number(b[1].id);
+      // Allow for floating-point error when comparing transformed scores
+      const tolerance = 4 * Number.EPSILON * (Math.abs(a[1].score) + Math.abs(b[1].score) + Math.abs(ratio) * (a[1].total + b[1].total));
+      if (Math.abs(diff) <= tolerance) {
+        return Number(a[1].id) - Number(b[1].id);
+      }
+      return diff;
     });
     // Return the total transformed score and the retained assignments
     const retained = ranked.slice(0, retainCount);
