@@ -3513,11 +3513,16 @@ if (document.title === 'Dashboard') {
         // Store the group id, assignment total, and other necessary information for the "min grade" operation (the assignment ID is stored at window.minGradeAssignment)
         // minGradeArr[1] is UNUSED
         const minGradeArr = [null,null,null,null,null,null,null]; // [group_id, UNUSED, total, drops: null (no drops) OR {low_drops, high_drops}, group_weighting, group_name, set: never_drop]
+        let includeTarget = true;
         // Check if ungraded/missing assignments are included in the grade calculation process
         const gradedAssignmentsOnly = document.getElementById('only_consider_graded_assignments')?.checked ?? true;
+        const validWeighting = !isObjectEmpty(config.weights) && (function() {
+          const weights = Object.values(config.weights);
+          return weights.length === courseAssignments.length && weights.every(weight => weight !== undefined && weight !== null);
+        })();
         if (config.use_weighting === undefined) {
-          // The course will use weighting if the course provides weighting or if the config has weighting
-          config.use_weighting = course.apply_assignment_group_weights || !isObjectEmpty(config.weights);
+          // The course will use weighting if the course provides weighting or if the config has valid weighting
+          config.use_weighting = course.apply_assignment_group_weights || validWeighting;
         }
         // Check if the course is unweighted
         const is_course_unweighted = !config.use_weighting;
@@ -3529,13 +3534,11 @@ if (document.title === 'Dashboard') {
           let groupScore = 0;
           let groupTotal = 0;
           map[group.name] = {};
-          map[group.name].weight = is_course_unweighted ? 1 : (!isObjectEmpty(config.weights) ? config.weights[group.name] : group.group_weight);
+          map[group.name].weight = is_course_unweighted ? 1 : (validWeighting ? config.weights[group.name] : group.group_weight);
           // If we are on the "min grade" group and if this group has no weighting, then exit early (group has no impact on your grade so a 0 is the minimum) 
           if (group.id === minGradeArr[0] && map[group.name].weight === 0) {
             desiredGradeWarningMessage.style.display = 'revert';
             desiredGradeWarningMessage.textContent = '⚠️ Warning: ⚠️\nAssignment group has 0 weight';
-            window.courseGrades[0] >= desiredGrade ? updateMinGradeDisplay(0, minGradeArr[2]) : updateMinGradeDisplay();
-            return;
           } else if (group.id === minGradeArr[0]) {
             desiredGradeWarningMessage.style.display = 'none';
           }
@@ -3554,6 +3557,7 @@ if (document.title === 'Dashboard') {
             if (window.minGradeAssignment === assignment.id) {
               minGradeArr[4] = map[group.name].weight;
               minGradeArr[5] = group.name;
+              includeTarget = !assignment.omit_from_final_grade && assignment.points_possible !== null;
               continue;
             }
             const total = assignment.points_possible;
@@ -3579,9 +3583,9 @@ if (document.title === 'Dashboard') {
         }
         // Attempt to perform drops here
         for (const group of courseAssignments) {
-          const totalAssignments = map[group.name].grades.length;
-          // Check if the number of drops is illegal (>= total assignments) and make adjustments accordingly
-          const [lowDrops, highDrops] = validateDropCounts(config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0, config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0, totalAssignments);
+          // Get the raw number of drops (necessary adjustments are made by applyDrops)
+          const lowDrops = config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0;
+          const highDrops = config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0;
           // If there are no drops to be done, then no further processing is necessary
           if (lowDrops === 0 && highDrops === 0) {
             continue;
@@ -3596,7 +3600,97 @@ if (document.title === 'Dashboard') {
           }
           applyDrops(map[group.name], lowDrops, highDrops, group.rules.never_drop);
         }
-
+        const targetGroup = map[minGradeArr[5]];
+        const [lowDrops, highDrops] = minGradeArr[3] ?? [0,0];
+        // Compute values for all groups except for the "min grade" group
+        // Sum of earned points
+        let otherScore = 0;
+        // Sum of possible points
+        let otherTotal = 0;
+        // Sum of group weight * group score / group total
+        let otherWeightedScore = 0;
+        // Sum of other weights
+        let otherWeight = 0;
+        for (const group of courseAssignments) {
+          if (group.id === minGradeArr[0]) {
+            continue;
+          }
+          const data = map[group.name];
+          otherScore += data.score;
+          otherTotal += data.total;
+          if (data.total !== 0) {
+            otherWeightedScore += data.weight * data.score / data.total;
+            otherWeight += data.weight;
+          }
+        }
+        // Evaluate the course grade for a hypothetical assignment score
+        const courseGradeAtScore = function(score) {
+          // Create fresh assignment group for testing since applyDrops modifies in-place
+          const data = { score: targetGroup.score, total: targetGroup.total, grades: targetGroup.grades.slice() };
+          // Inlcude the "min grade" assignment if appropriate before applying drops
+          if (includeTarget) {
+            data.grades.push({
+              id: window.minGradeAssignment,
+              score,
+              total: minGradeArr[2]
+            });
+            data.score += score;
+            data.total += minGradeArr[2];
+          }
+          if (lowDrops !== 0 || highDrops !== 0) {
+            applyDrops(data, lowDrops, highDrops, minGradeArr[6]);
+          }
+          // Check whether "min grade" assignment was retained
+          const targetKept = data.grades.some(assignment => assignment.id === window.minGradeAssignment);
+          // Compute unweighted course grade if appropriate
+          if (is_course_unweighted) {
+            const total = otherTotal + data.total;
+            if (total === 0) {
+              return [null,0];
+            }
+            // Each additional point increases the course grade points by 1/total, or course grade percentage by 100/total 
+            const courseGrade = 100 * (otherScore + data.score) / total;
+            const gradeChangePerPoint = targetKept ? 100 / total : 0;
+            return [courseGrade, gradeChangePerPoint];
+          }
+          let weight = otherWeight;
+          let weightedScore = otherWeightedScore;
+          // Only include fresh assignment group if the total is nonzero
+          if (data.total !== 0) {
+            weight += targetGroup.weight;
+            weightedScore += targetGroup.weight * data.score / data.total;
+          }
+          // No weighted grade exists when the included weight is zero
+          if (weight === 0) {
+            return [null, 0];
+          }
+          // Normalize contributions to a course grade percentage
+          const courseGrade = 100 * weightedScore / weight;
+          // (100 / data.total) is how many percentage points one earned point adds to the group's grade
+          // (targetGroup.weight / weight) is the group's portion of the included course weight
+          const gradeChangePerPoint = targetKept && data.total !== 0 ? (100 / data.total) * (targetGroup.weight / weight) : 0;
+          return [courseGrade, gradeChangePerPoint];
+        }
+        // Check the goal while allowing for small arithmetic rounding errors
+        const meetsGoal = function(courseGrade) {
+          if (courseGrade === null) {
+            return false;
+          }
+          // Check if course grade is higher than desired grade (with some tolerance due to rounding errors)
+          const tolerance = 8 * Number.EPSILON * Math.max(1,desiredGrade);
+          return courseGrade + tolerance >= desiredGrade;
+        }
+        // Handle assignments that cannot affect the course grade
+        // Assignment is either omitted from final grade, has a null point total, or the course is weighted and this group has no weight
+        if (!includeTarget || (!is_course_unweighted && targetGroup.weight === 0)) {
+          const [courseGrade] = courseGradeAtScore(0);
+          if (meetsGoal(courseGrade)) {
+            updateMinGradeDisplay(0, minGradeArr[2]);
+          } else {
+            updateMinGradeDisplay();
+          }
+          return;
+        }
         // Get the minimum grade needed for the current group to obtain the desired group in the current course
         const getMinGroupGrade = function() {
           if (is_course_unweighted) {
