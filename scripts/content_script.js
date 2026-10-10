@@ -133,74 +133,466 @@ const findVariance = function(gpaStandard, grades) {
   return (sumOfSquares / n) - (mean * mean);
 }
 
-// Determine adjusted drop values, if necessary
-// Low drops take priority over high drops (e.g. 2 assignments, 1 low & 1 high drop -> low drop will be applied, high drop will not)
-const validateDropCounts = function(lowDrops, highDrops, totalAssignments) {
-  // Check if adjustment is necessary
-  if (lowDrops + highDrops < totalAssignments) {
-    return [lowDrops, highDrops];
+// Convert a Number to a decimal integer and scale without rounding
+const decimalGradeValue = function(val) {
+  if (!Number.isFinite(val)) {
+    throw new Error('Scores and possible points must be finite');
   }
-  // Drops must leave at least one assignment remaining
-  const newLowDrops = Math.max(Math.min(lowDrops, totalAssignments-1), 0);
-  const newHighDrops = Math.max(Math.min(highDrops, totalAssignments-1-newLowDrops), 0);
-  return [newLowDrops, newHighDrops];
+  // Separate mantissa and exponent (if in scientific notation)
+  const [mantissa, exponent = '0'] = val.toString().split('e');
+  const [whole, fraction = ''] = mantissa.split('.');
+  // Remove the decimal point and count length while accounting for exponent
+  let coeff = BigInt(whole + fraction);
+  let decimalPlaces = fraction.length - Number(exponent);
+  // Shift any remaining negative decimal places back into the coefficient
+  if (decimalPlaces < 0) {
+    coeff *= 10n ** BigInt(-decimalPlaces);
+    decimalPlaces = 0;
+  }
+  return [coeff, decimalPlaces];
 }
 
-// Sort the assignments by simulating the grade after dropping the current assignment
-// Higher grade after drop is placed earlier
-const sortByDropImpact = function(groupData) {
-  groupData.grades.sort((a,b) => {
-    const dec_a = (groupData.score - a.score) / (groupData.total - a.total);
-    const dec_b = (groupData.score - b.score) / (groupData.total - b.total);
-    return dec_b - dec_a;
-  });
+// Convert a drop group's scores and totals to one integer scale
+const prepareDropData = function(assignments) {
+  // Keep track of largest number of decimal places
+  let places = 2;
+  const read = val => {
+    const parts = decimalGradeValue(val);
+    places = Math.max(places, parts[1]);
+    return parts;
+  };
+  // Keep track of score and total, while updating the number of decimal places needed
+  const points = new Map();
+  for (const assignment of assignments) {
+    if (assignment.total < 0) {
+      throw new Error('Assignment possible points cannot be negative');
+    }
+    points.set(assignment, { score: read(assignment.score), total: read(assignment.total) });
+  }
+  // Normalize each of the point values to the maximum number of decimal places
+  const scaled = parts => parts[0] * 10n ** BigInt(places - parts[1]);
+  for (const point of points.values()) {
+    point.score = scaled(point.score);
+    point.total = scaled(point.total);
+  }
+  // Return points maps and scale that is used
+  return { points, scale: 10n ** BigInt(places) };
+}
+
+// Sum grade values for retained assignments
+const updateGroupTotals = function(data) {
+  data.score = 0;
+  data.total = 0;
+  for (const assignment of data.grades) {
+    data.score += assignment.score;
+    data.total += assignment.total;
+  }
+  data.decimal = data.total === 0 ? 0 : Math.round((1e4 * data.score) / data.total) / 1e4;
+}
+
+// Return the unrounded course percentage using the normal group order
+const calculateRawCourseGrade = function(groups, weighted) {
+  let score = 0;
+  let total = 0;
+  for (const group of groups) {
+    if (!weighted) {
+      score += group.score;
+      total += group.total;
+      continue;
+    }
+    if (group.total === 0) {
+      continue;
+    }
+    score += group.weight * group.score / group.total;
+    total += group.weight;
+  }
+  if (total === 0) {
+    return null;
+  }
+  // Scale weighting up to 100
+  return weighted ? (100 / total) * score : 100 * score / total;
+}
+
+// Record the first hundredth where a feasible retained/dropped pair changes order
+const recordDropBoundary = function(assignments, droppable, retained, score, total, maximizeRetained, exact) {
+  const target = assignments.find(assignment => assignment.id === exact.targetId);
+  if (!target) {
+    return;
+  }
+  const retainedSet = new Set(retained);
+  const targetKept = retainedSet.has(target) || !droppable.includes(target) ? 1n : 0n;
+  // For equal totals, only the strongest dropped or weakest retained assignment can constrain the boundary
+  const candidatesByTotal = (assignments, preferBest) => {
+    const byTotal = new Map();
+    const res = [];
+    for (const assignment of assignments) {
+      if (assignment === target) {
+        res.push(assignment);
+        continue;
+      }
+      const point = exact.points.get(assignment);
+      const prev = byTotal.get(point.total);
+      if (prev) {
+        const prevScore = exact.points.get(prev).score;
+        // Compare scores according to the optimization direction, w/ tiebreak by ID
+        const better = point.score === prevScore ? Number(assignment.id) < Number(prev.id) :
+          (point.score > prevScore) === maximizeRetained;
+        if (better !== preferBest) {
+          continue;
+        }
+      }
+      byTotal.set(point.total, assignment);
+    }
+    return res.concat([...byTotal.values()]);
+  };
+  // If the target is dropped, its ratio cannot change until the retained set changes
+  const dropped = targetKept ? candidatesByTotal(droppable.filter(assignment => !retainedSet.has(assignment)), true) : [target];
+  const step = exact.scale / 100n;
+  const curr = exact.points.get(target).score / step;
+  const direction = maximizeRetained ? 1n : -1n;
+  for (const kept of candidatesByTotal(retained, false)) {
+    const a = exact.points.get(kept);
+    for (const removed of dropped) {
+      const b = exact.points.get(removed);
+      // Ignore swaps that would leave the retained set with zero possible points
+      if (total > 0n && total - a.total + b.total === 0n) {
+        continue;
+      }
+      const targetDiff = (kept === target ? 1n : 0n) - (removed === target ? 1n : 0n);
+      // How much the comparison changes per hundredth of the target's score
+      const change = direction * step * (total === 0n ? targetDiff : targetDiff * total - targetKept * (a.total - b.total));
+      // Only consider comparisons that move towards reversing the current order
+      if (change >= 0n) {
+        continue;
+      }
+      // Compare the current grade with the grade after swapping these assignments
+      // Cross-multiply to avoid division, reversing the comparison when minimizing
+      const diff = direction * (total === 0n ? (a.score - b.score) : (a.score - b.score) * total - score * (a.total - b.total));
+      const decrease = -change;
+      // A tie changes the ordering only if the dropped assignment has the lower ID
+      const dist = Number(kept.id) < Number(removed.id) ? diff / decrease + 1n : (diff + decrease - 1n) / decrease;
+      const next = curr + dist;
+      // Update bound
+      if (exact.nextCheckHundredth === null || next < exact.nextCheckHundredth) {
+        exact.nextCheckHundredth = next;
+      }
+    }
+  }
+}
+
+
+/**
+ * Determine optimal drops on a list of assignments, while considering neverDropIds
+ * Keep a positive retained total whenever possible
+ * maximizeRetained: true => low drops, false => high drops
+ * maxTotal: largest droppable total before low/high drops
+ * Reference: https://cseweb.ucsd.edu/~dakane/droplowest.pdf
+ */
+const findOptimalDrops = function(assignments, dropCount, neverDropIds, maximizeRetained, maxTotal, exactData) {
+  if (dropCount <= 0) {
+    return [];
+  }
+  const neverDrop = new Set(neverDropIds ?? []);
+  const droppable = assignments.filter(assignment => !neverDrop.has(assignment.id));
+  if (droppable.length <= 1) {
+    return [];
+  }
+  const exact = exactData ?? prepareDropData(assignments);
+  const retainCount = droppable.length - Math.min(dropCount, droppable.length-1);
+  // Accumulate the points from assignments that cannot be dropped
+  let fixedScore = 0n;
+  let fixedTotal = 0n;
+  for (const assignment of assignments) {
+    if (neverDrop.has(assignment.id)) {
+      const point = exact.points.get(assignment);
+      fixedScore += point.score;
+      fixedTotal += point.total;
+    }
+  }
+  const hasPossiblePoints = fixedTotal > 0n || droppable.some(assignment => exact.points.get(assignment).total > 0n);
+  const selectRetained = ordered => {
+    const selected = ordered.slice(0, retainCount);
+    if (hasPossiblePoints && fixedTotal === 0n && selected.every(assignment => exact.points.get(assignment).total === 0n)) {
+      // Replace the last selected item with the first available item with possible points
+      selected[retainCount-1] = ordered.find(assignment => exact.points.get(assignment).total > 0n);
+    }
+    return selected;
+  };
+  // Calculate the total earned and possible points for a retained selection
+  const retainedTotals = retained => {
+    let score = fixedScore;
+    let total = fixedTotal;
+    for (const assignment of retained) {
+      const point = exact.points.get(assignment);
+      score += point.score;
+      total += point.total;
+    }
+    return { score, total };
+  }
+  // Rank assignments by their contribution, with respect to the current retained ratio
+  const rankRetained = (score, total) => {
+    const ranked = droppable.map(assignment => {
+      const point = exact.points.get(assignment);
+      // format: [impact, assignment]
+      // impact = earned points - (current grade * possible points)
+      return [point.score * total - score * point.total, assignment];
+    });
+    ranked.sort((a, b) => {
+      if (a[0] === b[0]) {
+        return Number(a[1].id) - Number(b[1].id);
+      }
+      return (a[0] > b[0]) === maximizeRetained ? -1 : 1;
+    });
+    return selectRetained(ranked.map(pair => pair[1]));
+  };
+  let retained = selectRetained(droppable);
+  let { score, total } = retainedTotals(retained);
+  if (!hasPossiblePoints) {
+    // With no possible points, optimize earned scores instead of a ratio
+    retained = rankRetained(0n, 1n);
+    ({ score, total } = retainedTotals(retained));
+  } else {
+    // Repeatedly rank at the current retained ratio until no improvement remains
+    while (true) {
+      const next = rankRetained(score, total);
+      const { score: nextScore, total: nextTotal } = retainedTotals(next);
+      // Compare the new and current ratios
+      const improvement = nextScore * total - score * nextTotal;
+      retained = next;
+      score = nextScore;
+      total = nextTotal;
+      // Zero improvement establishes optimality, so drop set is finalized
+      if (improvement === 0n) {
+        break;
+      }
+    }
+  }
+  // Record the next score boundary where the optimal drop selection can change
+  if (exact.targetId !== undefined) {
+    recordDropBoundary(assignments, droppable, retained, score, total, maximizeRetained, exact);
+  }
+  // Return the dropped assignments
+  const retainedSet = new Set(retained);
+  return droppable.filter(assignment => !retainedSet.has(assignment));
+}
+
+/**
+ * Choose low drops first, then high drops from the remaining assignments
+ * Rearrange grades in-place as [ low drops | retained | high drops ]
+ * Returns the actual [low, high] drop counts
+ */
+const sortByDropImpact = function(groupData, lowDrops, highDrops, neverDropIds, exactData) {
+  const grades = groupData.grades;
+  const neverDrop = new Set(neverDropIds ?? []);
+  const droppable = grades.filter(grade => !neverDrop.has(grade.id));
+  // Exit early if there is nothing to drop
+  if (droppable.length === 0 || (lowDrops === 0 && highDrops === 0)) {
+    return [0,0];
+  }
+  // compute low drop and high drop counts
+  lowDrops = Math.min(lowDrops, droppable.length-1);
+  highDrops = lowDrops + highDrops >= droppable.length ? 0 : highDrops;
+  // Prepare exact point values once for both drop passes
+  const exact = exactData ?? prepareDropData(grades);
+  // compute low drops
+  const lowDropped = findOptimalDrops(grades, lowDrops, neverDropIds, true, undefined, exact);
+  const lowDroppedSet = new Set(lowDropped);
+  const afterLowGrades = grades.filter(grade => !lowDroppedSet.has(grade));
+  // compute high drops
+  const highDropped = findOptimalDrops(afterLowGrades, highDrops, neverDropIds, false, undefined, exact);
+  const highDroppedSet = new Set(highDropped);
+  const retained = afterLowGrades.filter(grade => !highDroppedSet.has(grade));
+  // rearranges grades so it is of the form [ low drops | retained | high drops ]
+  grades.splice(0, grades.length, ...lowDropped, ...retained, ...highDropped);
+  return [lowDropped.length, highDropped.length];
 }
 
 // Apply low/high drops to an assignment group (in-place)
 // onDrop is called with each dropped assignment
-const applyDrops = function(groupData, lowDrops, highDrops, neverDropIds, onDrop = () => {}) {
-  sortByDropImpact(groupData);
-  // Create a set of the assignments that should not be dropped
-  const neverDrop = new Set(neverDropIds ?? []);
+const applyDrops = function(groupData, lowDrops, highDrops, neverDropIds, exactData, onDrop = () => {}) {
+  const [actualLowDrops, actualHighDrops] = sortByDropImpact(groupData, lowDrops, highDrops, neverDropIds, exactData);
   // Perform the low drops
-  for (let i = 0; i < lowDrops; i++) {
-    if (groupData.grades.length === 0) {
-      break;
-    }
-    const assignment = groupData.grades[0];
-    // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
-    if (neverDrop.has(assignment.id)) {
-      groupData.grades.shift();
-      // Decrement i since the current assignment is not actually being dropped
-      i--;
-      continue;
-    }
-    groupData.score -= assignment.score;
-    groupData.total -= assignment.total;
-    // Remove elements from grades array
-    groupData.grades.shift();
+  // splice removes all of the elements and returns them for processing
+  for (const assignment of groupData.grades.splice(0, actualLowDrops)) {
     onDrop(assignment);
   }
   // Perform the high drops
-  for (let i = 0; i < highDrops; i++) {
-    if (groupData.grades.length === 0) {
-      break;
-    }
+  for (let i = 0; i < actualHighDrops; i++) {
     const assignment = groupData.grades[groupData.grades.length-1];
-    // If the current assignment should not be dropped, then move it to a special array then skip the additional processing
-    if (neverDrop.has(assignment.id)) {
-      groupData.grades.pop();
-      // Decrement i since the current assignment is not actually being dropped
-      i--;
-      continue;
-    }
-    groupData.score -= assignment.score;
-    groupData.total -= assignment.total;
     groupData.grades.pop();
     onDrop(assignment);
   }
-  // Re-calculate the decimal for the current group after applying drops
-  groupData.decimal = groupData.total === 0 ? 0 : Math.round((1e4 * groupData.score) / groupData.total) / 1e4;
+  updateGroupTotals(groupData);
+}
+
+// Find the minimum target score, in hundredth increments, needed to reach the desired course grade
+// Return null when the goal cannot be reached
+const findMinimumScore = function(groups, targetId, desiredGrade, weighted) {
+  if (!Number.isFinite(desiredGrade) || groups.some(group => !Number.isFinite(group.weight) || group.weight < 0)) {
+    throw new Error('The desired grade must be finite, and assignment group weights must be finite and non-negative');
+  }
+  if (groups.some(group => group.grades.some(assignment => !Number.isFinite(assignment.score) || !Number.isFinite(assignment.total) || assignment.total < 0))) {
+    throw new Error('Scores and possible points must be finite, with non-negative possible points');
+  }
+  // Copy each group and its grade array for applyDrops
+  // Only the target assignment itself needs to be copied (since the score is modified in-place)
+  let target;
+  let targetGroup;
+  const data = groups.map(group => {
+    let groupTarget;
+    const copy = {
+      ...group,
+      grades: group.grades.map(assignment => {
+        if (assignment.id !== targetId) {
+          return assignment;
+        }
+        groupTarget = { ...assignment };
+        return groupTarget;
+      })
+    };
+    if (groupTarget) {
+      target = groupTarget;
+      targetGroup = copy;
+    }
+    return copy;
+  });
+  // Apply drops in other groups once, since their scores are independent of the target group
+  for (const group of data) {
+    if (group !== targetGroup) {
+      applyDrops(group, group.lowDrops, group.highDrops, group.neverDropIds);
+    }
+  }
+  // A zero weight group or a group with no possible points doesn't affect course grade
+  if (weighted && targetGroup && (targetGroup.weight === 0 || targetGroup.grades.every(assignment => assignment.total === 0))) {
+    applyDrops(targetGroup, targetGroup.lowDrops, targetGroup.highDrops, targetGroup.neverDropIds);
+    targetGroup = undefined;
+    target = undefined;
+  }
+  // If the target cannot affect the grade, check whether the goal is already met
+  if (!target) {
+    const grade = calculateRawCourseGrade(data, weighted);
+    if (grade === null) {
+      throw new Error('A minimum score cannot be calculated because the course has no grade');
+    }
+    return grade >= desiredGrade ? 0 : null;
+  }
+  const assignments = targetGroup.grades;
+  const exact = prepareDropData(assignments);
+  const step = exact.scale / 100n;
+  exact.targetId = target.id;
+  // Convert hundredths to Number, checking that no hundredth is lost
+  const scoreAt = hundredths => {
+    const score = Number(hundredths) / 100;
+    if (!Number.isFinite(score) || BigInt(Math.round(score * 100)) !== hundredths) {
+      throw new Error('The required score is too large to display to the nearest hundredth');
+    }
+    return score;
+  };
+  // Recalculate the grade with the current drops
+  const gradeAt = hundredths => {
+    target.score = scoreAt(hundredths);
+    updateGroupTotals(targetGroup);
+    return calculateRawCourseGrade(data, weighted);
+  };
+  // Estimate the hundredths needed to reach the goal using the local grade slope
+  const estimateDistance = (startHundredths, startGrade) => {
+    // Determine how much the course grade increases per point on the target assignment
+    const gradeAfterOnePoint = gradeAt(startHundredths + 100n);
+    const gradeChangePerPoint = gradeAfterOnePoint - startGrade;
+    if (gradeChangePerPoint > 0) {
+      // Convert the required course grade increase into hundredths of an assignment point
+      const estimate = 100 * (desiredGrade - startGrade) / gradeChangePerPoint;
+      if (Number.isFinite(estimate)) {
+        return BigInt(Math.max(1, Math.floor(estimate)));
+      }
+    }
+    // If increasing the assignment score does not move the course grade towards the desired grade, then no estimate is available
+    return null;
+  };
+  // Find the first qualifying hundredth within a drop selection region
+  const firstQualifying = (start, end, startGrade) => {
+    let low = start + 1n;
+    let high = end;
+    // Use slope estimate for initial seach (not necessary but improves efficiency)
+    const distance = estimateDistance(start, startGrade);
+    if (distance !== null) {
+      const estimate = start + distance;
+      const probe = estimate < high ? estimate : high;
+      if (gradeAt(probe) >= desiredGrade) {
+        high = probe;
+      } else {
+        low = probe+1n;
+      }
+    }
+    // The grade is nondecreasing within a region, so binary search is valid.
+    while (low < high) {
+      const mid = low + ((high - low) / 2n);
+      if (gradeAt(mid) >= desiredGrade) {
+        high = mid;
+      } else {
+        low = mid+1n;
+      }
+    }
+    return low;
+  };
+  let hundredths = 0n;
+  while (true) {
+    // Recompute drops at the current score and determine the next boundary
+    exact.nextCheckHundredth = null;
+    exact.points.get(target).score = hundredths * step;
+    target.score = scoreAt(hundredths);
+    targetGroup.grades = assignments.slice();
+    applyDrops(targetGroup, targetGroup.lowDrops, targetGroup.highDrops, targetGroup.neverDropIds, exact);
+    // If course grade is as desired, exit early
+    const grade = calculateRawCourseGrade(data, weighted);
+    if (grade !== null && grade >= desiredGrade) {
+      return scoreAt(hundredths);
+    }
+    const nextBoundary = exact.nextCheckHundredth;
+    if (nextBoundary !== null && nextBoundary <= hundredths) {
+      throw new Error('The min score search did not advance to a later drop boundary');
+    }
+    // Search within the current region only if the target is retained
+    const targetKept = targetGroup.grades.includes(target);
+    if (targetKept && grade !== null) {
+      // Check if another boundary exists
+      if (nextBoundary !== null) {
+        // The boundary belongs to the next region, so exclude it here
+        const end = nextBoundary-1n;
+        // Check if there are additinal hundredths to search in this region
+        if (end > hundredths) {
+          const endGrade = gradeAt(end);
+          // Search only if the desired course lies into the interval [grade, endGrade]
+          if (endGrade >= desiredGrade) {
+            return scoreAt(firstQualifying(hundredths, end, grade));
+          }
+        }
+      } else {
+        // No more boundaries, so find a valid upper bound
+        // Start with the slope estimate
+        let distance = estimateDistance(hundredths, grade) ?? 1n;
+        let end = hundredths + distance;
+        let endGrade = gradeAt(end);
+        // Double distance until goal is reached
+        while (endGrade < desiredGrade) {
+          distance *= 2n;
+          end = hundredths + distance;
+          endGrade = gradeAt(end);
+        }
+        // Find the min score given a valid bound
+        return scoreAt(firstQualifying(hundredths, end, grade));
+      }
+    }
+    // Stop if no further drop boundaries remain and the goal has not been reached
+    if (nextBoundary === null) {
+      if (grade === null) {
+        throw new Error('A minimum score cannot be calculated because the course has no grade');
+      }
+      return null;
+    }
+    // Advance to the next region and recompute the optimal drops
+    hundredths = nextBoundary;
+  }
 }
 
 /**
@@ -2646,7 +3038,7 @@ if (document.title === 'Dashboard') {
         letterGradeCell.appendChild(letterGradeInput);
         lowerGradeThresholdCell.appendChild(gradeInput);
       }
-      // Update the table header for the 
+      // Update the table header for edit mode
       gradingStandardTable.firstElementChild.firstElementChild.children[1].textContent = 'Lower Grade Threshold (%)';
       gradingStandardTable.style.display = 'inline-table';
       setGradingStandard.style.display = 'none';
@@ -3370,16 +3762,14 @@ if (document.title === 'Dashboard') {
     });
 
     const updateMinGradeDisplay = function(score, total) {
-      if (total === undefined) {
-        minGradePercentage.style.display = 'none';
-        minGradeDivider.style.display = 'none';
-      } else {
-        minGradePercentage.style.display = '';
-        minGradeDivider.style.display = '';
-      }
+      const showPercentage = score !== null && total !== null;
+      // update display
+      minGradePercentage.style.display = showPercentage ? '' : 'none';
+      minGradeDivider.style.display = showPercentage ? '' : 'none';
       minGradeContainer.classList.remove('hide-grades');
-      minGradeScore.textContent = total === undefined ? `Impossible! 😭` : `${+(score.toFixed(2))}/${total}`;
-      minGradePercentage.textContent = total === undefined ? '' : (total === 0 ? '0%' : +((100 * score) / total).toFixed(2)+'%');
+      // update text
+      minGradeScore.textContent = score === null ? 'Impossible! 😭' : total === null ? '0% 🗿' : `${+(score.toFixed(2))}/${total}`;
+      minGradePercentage.textContent = showPercentage ? (total === 0 ? '0%' : +((100 * score) / total).toFixed(2)+'%') : '';
     }
     // Function for calculating the minimum grade required in order to get a certain grade in a course (or inform the user if their goal is impossible)
     const calculateMinGrade = async function() {
@@ -3388,7 +3778,7 @@ if (document.title === 'Dashboard') {
       // If the desired grade is provided as a percentage, then use that, or else, try to parse the input as a letter grade and convert it to a percentage (if possible)
       const desiredGrade = +(/^((\d+(\.(\d+)?)?)|(\.\d+))%?$/.test(gradeInput) ? gradeInput.replace(/%/, '') : Object.entries(config.grading_standard ?? classGradingStandard ?? globalConfig.default_grading_standard ?? default_grading_standard).find(([_grade,letterGrade]) => letterGrade === gradeInput)?.[0] ?? undefined);
       // If the grade input is "bad", then display the error message and do not continue
-      if (isNaN(desiredGrade)) {
+      if (!Number.isFinite(desiredGrade)) {
         desiredGradeErrorMessage.textContent = "Invalid percentage / letter grade!"
         desiredGradeErrorMessage.style.display = 'revert';
         return;
@@ -3403,254 +3793,63 @@ if (document.title === 'Dashboard') {
       try {
         // Store assignments and other data for each category
         const map = {}; 
-        // Store the group id, assignment total, and other necessary information for the "min grade" operation (the assignment ID is stored at window.minGradeAssignment)
-        // minGradeArr[1] is UNUSED
-        const minGradeArr = [null,null,null,null,null,null,null]; // [group_id, UNUSED, total, drops: null (no drops) OR {low_drops, high_drops}, group_weighting, group_name, set: never_drop]
+        // Store the group id and assignment total
+        const targetGroupId = window.minGradeAssignmentData[1];
+        const targetTotal = window.minGradeAssignmentData[2];
         // Check if ungraded/missing assignments are included in the grade calculation process
         const gradedAssignmentsOnly = document.getElementById('only_consider_graded_assignments')?.checked ?? true;
+        const validWeighting = !isObjectEmpty(config.weights) && (function() {
+          const weights = Object.values(config.weights);
+          return weights.length === courseAssignments.length && weights.every(weight => weight !== undefined && weight !== null);
+        })();
         if (config.use_weighting === undefined) {
-          // The course will use weighting if the course provides weighting or if the config has weighting
-          config.use_weighting = course.apply_assignment_group_weights || !isObjectEmpty(config.weights);
+          // The course will use weighting if the course provides weighting or if the config has valid weighting
+          config.use_weighting = course.apply_assignment_group_weights || validWeighting;
         }
-        // Check if the course is unweighted
-        const is_course_unweighted = !config.use_weighting;
-        // Update the group id and the assignment point total for the "min grade" assignment
-        minGradeArr[0] = window.minGradeAssignmentData[1];
-        minGradeArr[2] = window.minGradeAssignmentData[2];
-        // Calculate grades for each assignment group and store them in the map
+        // Prepare assignment groups for the min grade search
         for (const group of courseAssignments) {
-          let groupScore = 0;
-          let groupTotal = 0;
-          map[group.name] = {};
-          map[group.name].weight = is_course_unweighted ? 1 : (!isObjectEmpty(config.weights) ? config.weights[group.name] : group.group_weight);
-          // If we are on the "min grade" group and if this group has no weighting, then exit early (group has no impact on your grade so a 0 is the minimum) 
-          if (group.id === minGradeArr[0] && map[group.name].weight === 0) {
-            desiredGradeWarningMessage.style.display = 'revert';
+          const data = {
+            grades: [],
+            weight: config.use_weighting ? (validWeighting ? config.weights[group.name] : group.group_weight) : 1,
+            lowDrops: config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0,
+            highDrops: config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0,
+            neverDropIds: group.rules.never_drop ?? [],
+          };
+          map[group.name] = data;
+          // Warn if the target's group has zero weight
+          if (group.id === targetGroupId) {
+            desiredGradeWarningMessage.style.display = data.weight === 0 ? 'revert' : 'none';
             desiredGradeWarningMessage.textContent = '⚠️ Warning: ⚠️\nAssignment group has 0 weight';
-            window.courseGrades[0] >= desiredGrade ? updateMinGradeDisplay(0, minGradeArr[2]) : updateMinGradeDisplay();
-            return;
-          } else if (group.id === minGradeArr[0]) {
-            desiredGradeWarningMessage.style.display = 'none';
           }
-          map[group.name].grades = new Array();
           for (const assignment of group.assignments) {
-            // Do not include assignments that are not counted towards your final grade (also don't include assignments that have not been graded)
-            // Don't consider missing/ungraded assignments if the gradedAssignmentsOnly checkbox is ticked or if there is a what-if score
-            // Assignment is missing if assignment.submission.missing is true; Assignment is ungraded if assignment.submission.score is null or if assignment.submission.workflow_state is not "graded"
-            // Do not skip the current assignment if it is the "min grade" assignment
             const missingFlag = assignment.submission.missing;
             const ungradedFlag = assignment.submission.score === null|| assignment.submission.workflow_state !== 'graded';
-            if (window.minGradeAssignment !== assignment.id && (assignment.omit_from_final_grade || (gradedAssignmentsOnly && ((missingFlag || ungradedFlag) && window.previousGradeConfig !== 'DOM' && window.previousGradeConfig?.[assignment.id] === undefined)))) {
+            const isTarget = assignment.id === window.minGradeAssignment;
+            // Exclude assignments that do not count towards the final grade
+            if (assignment.omit_from_final_grade || assignment.points_possible === null) {
               continue;
             }
-            // Check if the current assignment is the current assignment for the "min grade" operation
-            if (window.minGradeAssignment === assignment.id) {
-              minGradeArr[4] = map[group.name].weight;
-              minGradeArr[5] = group.name;
+            // Exclude missing/ungraded assignments unless they are the target or have a what-if score
+            if (!isTarget && gradedAssignmentsOnly && (missingFlag || ungradedFlag) && window.previousGradeConfig !== 'DOM' && window.previousGradeConfig?.[assignment.id] === undefined) {
               continue;
             }
-            const total = assignment.points_possible;
-            if (total === null) {
-              continue;
-            }
-            const score = window.previousGradeConfig === 'DOM' ? getWhatIfGrade(assignment) : window.previousGradeConfig?.[assignment.id] ?? assignment.submission.score ?? 0;
+            // Initialize the target score to zero and use existing scores for other assignments
+            const score = isTarget ? 0 : window.previousGradeConfig === 'DOM' ? getWhatIfGrade(assignment) : window.previousGradeConfig?.[assignment.id] ?? assignment.submission.score ?? (!gradedAssignmentsOnly ? 0 : null);
             if (score === null || score === undefined) {
               continue;
             }
-            map[group.name].grades.push({
+            data.grades.push({
               id: assignment.id,
               score,
-              total,
+              total: assignment.points_possible,
             });
-            groupScore += score;
-            groupTotal += total;
           }
-          // Update map with computed values for the current group
-          map[group.name].score = groupScore;
-          map[group.name].total = groupTotal;
-          map[group.name].decimal = groupTotal === 0 ? 0 : groupScore / groupTotal;
         }
-        // Attempt to perform drops here
-        for (const group of courseAssignments) {
-          const totalAssignments = map[group.name].grades.length;
-          // Check if the number of drops is illegal (>= total assignments) and make adjustments accordingly
-          const [lowDrops, highDrops] = validateDropCounts(config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0, config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0, totalAssignments);
-          // If there are no drops to be done, then no further processing is necessary
-          if (lowDrops === 0 && highDrops === 0) {
-            continue;
-          }
-          // Check if the group for the "min grade" uses drops (only reaches this point if the current group has at least one low / high drop)
-          if (group.id === minGradeArr[0]) {
-            // Set the drops used flag to true and DO NOT perform any processing on this group
-            minGradeArr[3] = [lowDrops, highDrops];
-            // Configure the never drop set
-            minGradeArr[6] = new Set(group.rules.never_drop ?? []);
-            continue;
-          }
-          applyDrops(map[group.name], lowDrops, highDrops, group.rules.never_drop);
-        }
-
-        // Get the minimum grade needed for the current group to obtain the desired group in the current course
-        const getMinGroupGrade = function() {
-          if (is_course_unweighted) {
-            return null;
-          }
-          // Course is weighted
-          let classScore = 0;
-          let weightTotal = 0;
-          for (const group of courseAssignments) {
-            // Add the weight for the current group to the total (and do nothing else) if the current group has the "min grade" 
-            // This case is necessary since the "min grade" is not considered when computing a group's total (map[group.name].total)
-            if (group.id === minGradeArr[0]) {
-              weightTotal += map[group.name].weight;
-              continue;
-            }
-            // If there are no grades available in this group, then don't process this group
-            if (map[group.name].total === 0) {
-              continue;
-            }
-            // Compute the class score while considering weighting
-            classScore += (map[group.name].score * map[group.name].weight / map[group.name].total);
-            // Keep track of the total weight being used for your grade
-            weightTotal += map[group.name].weight;
-          }
-          const k = weightTotal === 0 ? 0 : 100 / weightTotal;
-          // Throw an error if unexpected behavior arises
-          if (k === 0) {
-            throw new Error(`Something unexpected happened when attempting to calculate the minimum grade required on assignment ${window.minGradeAssignment} to get a ${desiredGrade}`);
-          }
-          // Scale the weighting for the "min grade" group
-          minGradeArr[4] *= k;
-          // Scale the class score using the total considered weighting
-          classScore *= k;
-          // Find the maximum grade (percentage) that you can get without including the "min grade" group
-          const maxGrade = 100 - minGradeArr[4];
-          // Throw an error if unexpected behavior arises
-          if (maxGrade === 100) {
-            throw new Error(`Something unexpected happened when attempting to calculate the minimum grade required on assignment ${window.minGradeAssignment} to get a ${desiredGrade}`, maxGrade);
-          }
-          // Find the minimum group grade required to get your desired grade in the class (cannot be less than 0)
-          return Math.max(desiredGrade - classScore, 0) / (100 - maxGrade);
-        }
-        // Check if drops were used for the current group, and if so, then perform the correct operation for finding the "min grade"
-        if (minGradeArr[3] != null) {
-          // Sort the min grades array
-          sortByDropImpact(map[minGradeArr[5]]);
-          const gradesArr = map[minGradeArr[5]].grades;
-          // Remove all assignments that are "never dropped" from the grades array (makes processing much easier)
-          // Removal of the assignments in being done in place
-          if (minGradeArr[6].size !== 0) {
-            let marker = 0;
-            for (let i = 0; i < gradesArr.length; i++) {
-              const grade = gradesArr[i];
-              if (minGradeArr[6].has(grade.id)) {
-                gradesArr[i] = null;
-              } else {
-                gradesArr[marker++] = gradesArr[i];
-              }
-            }
-            gradesArr.length = marker;
-          }
-          // If the course is unweighted, then calculate the complete score and complete total (without the current group)
-          const nonMinGroupGrade = !is_course_unweighted ? null : (function() {
-            let completeScore = 0;
-            let completeTotal = 0;
-            for (const group of courseAssignments) {
-              if (group.id === minGradeArr[0]) {
-                continue;
-              }
-              completeScore += map[group.name].score;
-              completeTotal += map[group.name].total;
-            }
-            return [completeScore, completeTotal];
-          })();
-          let activeScore = map[minGradeArr[5]].score;
-          let activeTotal = map[minGradeArr[5]].total;
-          // Check if the current assignment is not a never drop assignment
-          const canMinGradeDrop = !minGradeArr[6].has(window.minGradeAssignment);
-          // minGradeArr[3]: [low_drops, high_drops]
-          // group score: map[minGradeArr[5]].score
-          // group total: map[minGradeArr[5]].total
-          const minGroupGrade = getMinGroupGrade();
-          if (minGradeArr[3][0] + minGradeArr[3][1] >= gradesArr.length + 1) {
-            // All of the assignments are dropped (the never drop assignments will not be in the grades array so just subtract all of the scores & totals)
-            for (const assignment of gradesArr) {
-              activeScore -= assignment.score;
-              activeTotal -= assignment.total;
-            }
-            // The "min grade" does not matter here, since the current assignment is being dropped
-            updateMinGradeDisplay(0, minGradeArr[2]);
-            return;
-          }
-          // Subtract initial low drop score/total points (off by one since the "min grade" will be placed at the beginning of the grades array)
-          for (let i = 0; i < minGradeArr[3][0] - 1; i++) {
-            activeScore -= gradesArr[i].score;
-            activeTotal -= gradesArr[i].total;
-          }
-          // Subtract high drops score/total points
-          for (let i = 0; i < minGradeArr[3][1]; i++) {
-            activeScore -= gradesArr[gradesArr.length-1-i].score;
-            activeTotal -= gradesArr[gradesArr.length-1-i].total;
-          }
-
-          // Note the proper starting and ending boundaries [startIdx, finishIdx)
-          const startIdx = Math.max(0, minGradeArr[3][0] - 1);
-          const finishIdx = gradesArr.length - minGradeArr[3][1];
-
-          // Potential optimization: only 3 cases exist (low drop, kept assignment, high drop)
-          // The current loop is simpler than cases and the window is expected to be small
-          for (let i = startIdx; i < finishIdx; i++) {
-            // Check if the "min grade" assignment should be considered as a low drop (in terms of the active score and total)
-            // Also check if the "min grade" assignment should be considered as a high drop
-            if ((i === startIdx && minGradeArr[3][0] > 0 && !canMinGradeDrop) || (i === startIdx + 1 && minGradeArr[3][0] > 0 && canMinGradeDrop)) {
-              activeScore -= gradesArr[i-1].score;
-              activeTotal -= gradesArr[i-1].total;
-            } else if (i === finishIdx - 1 && minGradeArr[3][1] > 0 && canMinGradeDrop) {
-              activeScore += gradesArr[i+1].score;
-              activeTotal += gradesArr[i+1].total;
-            }
-            // Set a flag for whether or not the current assignment is being considered as a drop
-            const dropFlag = canMinGradeDrop && ((i === startIdx && minGradeArr[3][0] > 0) || (i === finishIdx - 1 && minGradeArr[3][1] > 0));
-            const maxScore = i === finishIdx - 1 && minGradeArr[3][1] === 0 ? Infinity : (dropFlag ? 0 : (activeScore - (activeTotal - gradesArr[i].total) * (activeScore - gradesArr[i].score) / (activeTotal - gradesArr[i].total)));
-            const maxGrade = i === finishIdx - 1 && minGradeArr[3][1] === 0 ? Infinity : (dropFlag ? 100 * activeScore / activeTotal : (100 * (activeScore + maxScore) / (activeTotal + minGradeArr[2])));
-            // Check if the max score gives you the desired grade (if not then check if the max grade is greater than the desired grade)
-            if (!is_course_unweighted && maxGrade >= 100 * minGroupGrade) {
-              // We can safely use a grade less than or equal to the max grade to get the desired grade
-              const minGrade = maxScore === 0 ? 0 : Math.max(0, (activeTotal + minGradeArr[2]) * minGroupGrade - activeScore);
-              updateMinGradeDisplay(minGrade, minGradeArr[2]);
-              return;
-            } else if (is_course_unweighted && (100 * (maxScore + activeScore + nonMinGroupGrade[0]) / ((dropFlag ? 0 : minGradeArr[2]) + activeTotal + nonMinGroupGrade[1])) >= desiredGrade) {
-              // We can safely use a grade less than or equal to the max grade to get the desired grade
-              // Account for whether or not the "min grade" assignment is being dropped for the first iteration (use the drop flag)
-              const minGrade = Math.max(0, ((dropFlag ? 0 : minGradeArr[2]) + activeTotal + nonMinGroupGrade[1]) * (desiredGrade / 100) - (activeScore + nonMinGroupGrade[0]))
-              updateMinGradeDisplay(minGrade, minGradeArr[2]);
-              return;
-            }
-          }
-          // The "min grade" is a high drop (since a valid grade wasn't caught in the loop, the desired grade cannot be obtained)
-          updateMinGradeDisplay();
-          return;
-        }
-        // Drops were not used for the current group (easy case)
-        // Check if the course is unweighted
-        if (is_course_unweighted) {
-          let completeScore = 0;
-          let completeTotal = 0;
-          for (const group of courseAssignments) {
-            // Compute score and total for your grade
-            completeScore += map[group.name].score;
-            completeTotal += map[group.name].total;
-          }
-          // Solve for the min grade (set the lower bond)
-          const minGrade = Math.max(0, (completeTotal + minGradeArr[2]) * (desiredGrade / 100) - completeScore);
-          updateMinGradeDisplay(minGrade, minGradeArr[2]);
-          return;
-        }
-        const minGroupGrade = getMinGroupGrade();
-        // Solve for the min grade
-        const minGrade = Math.max(0, (map[minGradeArr[5]].total + minGradeArr[2]) * minGroupGrade - map[minGradeArr[5]].score);
-        updateMinGradeDisplay(minGrade, minGradeArr[2]);
+        const minScore = findMinimumScore(Object.values(map), window.minGradeAssignment, desiredGrade, config.use_weighting);
+        updateMinGradeDisplay(minScore, targetTotal);
       } catch (err) {
+        desiredGradeErrorMessage.textContent = err.message;
+        desiredGradeErrorMessage.style.display = 'revert';
         console.error(`An error has occured when calculating the course grade for ${course.course_code}`, err);
       }
     }
@@ -3776,8 +3975,6 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
     const is_course_unweighted = !config.use_weighting;
     // Calculate statistics and grades for each assignment group and store them in the map
     for (const group of groups) {
-      let groupScore = 0;
-      let groupTotal = 0;
       let statsGroupTotal = 0;
       map[group.name] = {};
       groupMap[group.id] = group.name;
@@ -3785,7 +3982,7 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
       map[group.name].grades = new Array();
       if (getCourseStatistics) {
         for (const [stat] of STAT_FIELDS) {
-          map[group.name][stat] = { score: 0, total: 0, grades: [] };
+          map[group.name][stat] = { weight: map[group.name].weight, grades: [] };
         }
       }
       for (const assignment of group.assignments) {
@@ -3816,45 +4013,39 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
         if (getCourseStatistics && statistics !== undefined) {
           // Contribute to the score total of all of the grades for each stat
           for (const [stat, field] of STAT_FIELDS) {
-            map[group.name][stat].grades.push({ id: assignment.id, score: statistics[field], total });
-            map[group.name][stat].score += statistics[field];
-            map[group.name][stat].total += total;
+            const statScore = statistics[field] === null ? 0 : statistics[field];
+            map[group.name][stat].grades.push({
+              id: assignment.id,
+              score: statScore,
+              total
+            });
           }
           statsGroupTotal += total;
         }
-        groupScore += score;
-        groupTotal += total;
       }
       // Update map with computed values for the current group
-      map[group.name].score = groupScore;
-      map[group.name].total = groupTotal;
-      map[group.name].decimal = groupTotal === 0 ? 0 : groupScore / groupTotal;
       if (getCourseStatistics) {
         map[group.name].statsTotal = statsGroupTotal;
       }
     }
+    const gradeGroups = Object.values(map);
     // Remove 'dropped' class from all rows that currently have it (re-apply the 'dropped' class manually)
     document.querySelectorAll('#grades_summary .dropped').forEach(assignment => assignment.classList.remove('dropped'));
     // Attempt to perform drops here (also update UI for dropped assignments)
     for (const group of groups) {
-      const totalAssignments = map[group.name].grades.length;
-      // Check if the number of drops is illegal (>= total assignments) and make adjustments accordingly
-      const [lowDrops, highDrops] = validateDropCounts(config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0, config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0, totalAssignments);
-      // If there are no drops to be done, then no further processing is necessary
-      if (lowDrops === 0 && highDrops === 0) {
-        continue;
-      }
-      applyDrops(map[group.name], lowDrops, highDrops, group.rules.never_drop, assignment => {
+      // Get the raw number of drops (necessary adjustments are made by applyDrops)
+      const lowDrops = config.drops?.[group.name]?.[0] ?? group.rules.drop_lowest ?? 0;
+      const highDrops = config.drops?.[group.name]?.[1] ?? group.rules.drop_highest ?? 0;
+      applyDrops(map[group.name], lowDrops, highDrops, group.rules.never_drop, undefined, assignment => {
         // Apply dropped UI by adding the 'dropped' class to the assignment row that is being dropped (uses assignment ID)
         if (document.title !== 'Dashboard') {
           document.getElementById(`submission_${assignment.id}`).classList.add('dropped');
         }
       });
-      if (getCourseStatistics && map[group.name].statsTotal !== 0) {
+      if (getCourseStatistics) {
         for (const [stat] of STAT_FIELDS) {
           const statData = map[group.name][stat];
-          const [statLow, statHigh] = validateDropCounts(lowDrops, highDrops, statData.grades.length);
-          applyDrops(statData, statLow, statHigh, group.rules.never_drop);
+          applyDrops(statData, lowDrops, highDrops, group.rules.never_drop);
         }
       }
     }
@@ -3870,66 +4061,26 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
       row.querySelector('span.tooltip').textContent = groupTotal === '0.00' ? 'N/A' : groupPercentage + '%';
       row.querySelector('td.details').textContent = `${groupScore} / ${groupTotal}`;
     }
-    let completeScore = 0;
-    let completeTotal = 0;
-    // If the course is unweighted, then compute the grade (and statistics grades too if applicable)
+    // Save earned and possible points for the unweighted course display
     if (is_course_unweighted) {
-      const stats = Object.fromEntries(STAT_FIELDS.map(([stat]) => [stat, 0]));
-      const statTotals = Object.fromEntries(STAT_FIELDS.map(([stat]) => [stat, 0]));
-      for (const group of groups) {
-        // Compute score and total for your grade
-        completeScore += map[group.name].score;
-        completeTotal += map[group.name].total;
-        // If the statsTotal is 0 or if we are not calculating the course statistics, then finish computing the current group
-        if (!getCourseStatistics || map[group.name].statsTotal === 0) {
-          continue;
-        }
-        // Compute the score and total for the class statistics
-        for (const [stat] of STAT_FIELDS) {
-          stats[stat] += map[group.name][stat].score;
-          statTotals[stat] += map[group.name][stat].total;
-        }
+      let score = 0;
+      let total = 0;
+      for (const group of gradeGroups) {
+        score += group.score;
+        total += group.total;
       }
-      window.coursePoints = [completeScore, completeTotal];
-      // If there are no grades contributing to the class statistics, then return -1 
-      // Grades are all rounded to 2 decimal places 
-      return [completeTotal === 0 ? 'NG' : +((100 * completeScore / completeTotal).toFixed(2))]
-      .concat(STAT_FIELDS.map(([stat]) => statTotals[stat] === 0 ? -1 : +((100 * stats[stat] / statTotals[stat]).toFixed(2))));
+      window.coursePoints = [score, total];
     }
-    let classScore = 0;
-    let weightTotal = 0;
-    const stats = Object.fromEntries(STAT_FIELDS.map(([stat]) => [stat, 0]));
-    const statWeights = Object.fromEntries(STAT_FIELDS.map(([stat]) => [stat, 0]));
-    for (const group of groups) {
-      // Compute the class score while considering weighting
-      if (map[group.name].total !== 0) {
-        classScore += (map[group.name].score * map[group.name].weight / map[group.name].total);
-        // Keep track of the total weight being used for your grade
-        weightTotal += map[group.name].weight;
+    const rawCourseGrade = calculateRawCourseGrade(gradeGroups, !is_course_unweighted);
+    const courseGrade = rawCourseGrade === null ? 'NG' : +rawCourseGrade.toFixed(2);
+    return [courseGrade].concat(STAT_FIELDS.map(([stat]) => {
+      if (!getCourseStatistics) {
+        return -1;
       }
-      // If the statsTotal is 0, then don't continue to compute this group
-      if (!getCourseStatistics || map[group.name].statsTotal === 0) {
-        continue;
-      }
-      // Compute the grades for class statistics while considering weighting
-      for (const [stat] of STAT_FIELDS) {
-        const statTotal = map[group.name][stat].total;
-        if (statTotal === 0) {
-          continue;
-        }
-        // Keep track of the total weight being used for the class statistics
-        statWeights[stat] += map[group.name].weight;
-        stats[stat] += (map[group.name][stat].score * map[group.name].weight / statTotal);
-      }
-    }
-    // Compute scalars for determining how to scale your grade and the class statistics grades 
-    // Solves the issue of having assignment groups with 0 entries being stored as a 0
-    const k = weightTotal === 0 ? 0 : 100 / weightTotal;
-    // Grades are all rounded to 2 decimal places 
-    return [k === 0 ? 'NG' : +((k * classScore).toFixed(2))]
-    .concat(STAT_FIELDS.map(([stat]) => {
-      const statsK = statWeights[stat] === 0 ? 0 : 100 / statWeights[stat];
-      return statsK === 0 ? -1 : +((statsK * stats[stat]).toFixed(2));
+      // Exclude groups without usable Canvas statistics
+      const statGroups = gradeGroups.filter(group => group.statsTotal !== 0).map(group => group[stat]);
+      const rawGrade = calculateRawCourseGrade(statGroups, !is_course_unweighted);
+      return rawGrade === null ? -1 : +rawGrade.toFixed(2);
     }));
   } catch (err) {
     console.error(`An error has occured when calculating the course grade for ${course.course_code}`, err);
