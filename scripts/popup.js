@@ -27,6 +27,7 @@ const saveChanges = document.getElementById('saveChanges');
 const saveChangesLabel = document.getElementById('saveChangesLabel');
 const sendMessageLabel = document.getElementById('sendMessageLabel');
 const nameInput = document.getElementById('name');
+const emailInput = document.getElementById('email');
 const messageInput = document.getElementById('message');
 const linksContainer = document.getElementById('links');
 const webhookURL = 'https://zingy-moonbeam-a2a551.netlify.app/.netlify/functions/api';
@@ -88,8 +89,15 @@ const getSize = obj => new Blob([JSON.stringify(obj)]).size;
 
 contactFormButton.addEventListener('click', () => {
   const name = nameInput.value.trim();
+  const email = emailInput.value.trim();
   const message = messageInput.value.trim();
-  if (message === '') {
+  emailInput.value = email;
+  if (email !== '' && !emailInput.checkValidity()) {
+    sendMessageLabel.style.visibility = 'visible';
+    sendMessageLabel.style.color = 'red';
+    sendMessageLabel.textContent = "Please enter a valid email address!";
+    return;
+  } else if (message === '') {
     sendMessageLabel.style.visibility = 'visible';
     sendMessageLabel.style.color = 'red';
     sendMessageLabel.textContent = "Please fill out the message field!";
@@ -105,7 +113,7 @@ contactFormButton.addEventListener('click', () => {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ name, message }),
+    body: JSON.stringify({ name, email, message }),
   })
   .then(response => {
     if (response.ok) {
@@ -113,6 +121,7 @@ contactFormButton.addEventListener('click', () => {
       sendMessageLabel.style.color = 'black';
       sendMessageLabel.textContent = "Message sent successfully!";
       nameInput.value = '';
+      emailInput.value = '';
       messageInput.value = '';
     } else {
       sendMessageLabel.style.visibility = 'visible';
