@@ -285,10 +285,9 @@ const recordDropBoundary = function(assignments, droppable, retained, score, tot
  * Determine optimal drops on a list of assignments, while considering neverDropIds
  * Keep a positive retained total whenever possible
  * maximizeRetained: true => low drops, false => high drops
- * maxTotal: largest droppable total before low/high drops
  * Reference: https://cseweb.ucsd.edu/~dakane/droplowest.pdf
  */
-const findOptimalDrops = function(assignments, dropCount, neverDropIds, maximizeRetained, maxTotal, exactData) {
+const findOptimalDrops = function(assignments, dropCount, neverDropIds, maximizeRetained, exactData) {
   if (dropCount <= 0) {
     return [];
   }
@@ -395,11 +394,11 @@ const sortByDropImpact = function(groupData, lowDrops, highDrops, neverDropIds, 
   // Prepare exact point values once for both drop passes
   const exact = exactData ?? prepareDropData(grades);
   // compute low drops
-  const lowDropped = findOptimalDrops(grades, lowDrops, neverDropIds, true, undefined, exact);
+  const lowDropped = findOptimalDrops(grades, lowDrops, neverDropIds, true, exact);
   const lowDroppedSet = new Set(lowDropped);
   const afterLowGrades = grades.filter(grade => !lowDroppedSet.has(grade));
   // compute high drops
-  const highDropped = findOptimalDrops(afterLowGrades, highDrops, neverDropIds, false, undefined, exact);
+  const highDropped = findOptimalDrops(afterLowGrades, highDrops, neverDropIds, false, exact);
   const highDroppedSet = new Set(highDropped);
   const retained = afterLowGrades.filter(grade => !highDroppedSet.has(grade));
   // rearranges grades so it is of the form [ low drops | retained | high drops ]
@@ -3845,7 +3844,7 @@ if (document.title === 'Dashboard') {
             });
           }
         }
-        const minScore = findMinimumScore(Object.values(map), window.minGradeAssignment, desiredGrade, config.use_weighting);
+        const minScore = findMinimumScore(courseAssignments.map(group => map[group.name]), window.minGradeAssignment, desiredGrade, config.use_weighting);
         updateMinGradeDisplay(minScore, targetTotal);
       } catch (err) {
         desiredGradeErrorMessage.textContent = err.message;
@@ -4028,7 +4027,7 @@ const getCourseGrade = async function(course, config, groups, whatIfScores, getC
         map[group.name].statsTotal = statsGroupTotal;
       }
     }
-    const gradeGroups = Object.values(map);
+    const gradeGroups = groups.map(group => map[group.name]);
     // Remove 'dropped' class from all rows that currently have it (re-apply the 'dropped' class manually)
     document.querySelectorAll('#grades_summary .dropped').forEach(assignment => assignment.classList.remove('dropped'));
     // Attempt to perform drops here (also update UI for dropped assignments)
