@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CanvasGradesPro",
-  "description": "Enhance your Canvas experience with features designed to simplify grade tracking and improve your academic performance",
+  "description": "Track course grades and GPA directly in Canvas, and calculate the assignment grade or term GPA needed to reach your goal.",
   "version": "1.0.13",
   "action": {
     "default_icon": "logo.png",
