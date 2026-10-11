@@ -11,23 +11,23 @@
 
 [<img src="https://raw.githubusercontent.com/alrra/browser-logos/90fdf03c/src/firefox/firefox.svg" width="48" alt="Firefox" valign="middle">][link-firefox] [<img valign="middle" src="https://img.shields.io/amo/v/canvasgradespro.svg?label=%20">][link-firefox]
 
-## Features 
+## Overview
 
-- Add GPA card to the dashboard cards list
-    - Displays your cumulative GPA and term GPA
-    - Stores grade to GPA mapping
-    - Allows you to find minimum GPA for current term to get a X cumulative GPA
-- Adds grades to the dashboard cards
-- Bypass instructor hiding course grades
-- Allows user to add/disable weighting for assignment groups
-- Allows users to configure drop rules for assignment groups
-- Allows users to set custom grading standard/scale
-- Adds class grade statistics
-- Fixes "What-If Scores" button
-- Popup for customizing grade overlay and course grades page
-- Calculator for finding the minimum grade required on an assignment so that you're grade is a X% or a specified letter grade
-- Custom font support for the grade overlays via Google Fonts
+CanvasGradesPro adds grade tracking and calculation tools directly to Canvas. It shows your course grades and GPA, and calculates the assignment grade or term GPA needed to reach your goal.
 
+- Calculate your course grade when the total is hidden
+- Show course grades on dashboard cards
+- Add a GPA card to the dashboard
+  - View your term and cumulative GPA
+  - Set custom grade-to-GPA mappings
+  - Find the minimum term GPA needed to reach a cumulative GPA goal
+- Set custom assignment group weights
+- Set custom assignment group drop rules
+- Set custom letter grade ranges
+- View class grade statistics
+- Recalculate course grades when using Canvas "What-If Scores"
+- Find the minimum assignment grade needed to reach a desired course grade
+- Customize dashboard grade overlays with colors and fonts
 
 ### Dashboard Grade Overlays
 <img src="./screenshots/01-dashboard-grades.png" alt="Dashboard Grade Overlays" valign="middle" align="middle">
