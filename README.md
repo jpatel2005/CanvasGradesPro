@@ -29,14 +29,20 @@
 - Custom font support for the grade overlays via Google Fonts
 
 
-### Grade Overlays
-<img src="https://i.ibb.co/1vB5hXb/extension-Store-Picture2.png" alt="Grade Overlays" valign="middle" align="middle">
+### Dashboard Grade Overlays
+<img src="./screenshots/01-dashboard-grades.png" alt="Dashboard Grade Overlays" valign="middle" align="middle">
 
-### GPA Card
-<img src="https://i.ibb.co/FBCYdXc/extension-Store-Picture.png" alt="GPA Card" valign="middle" align="middle">
+### GPA Card and Minimum GPA Calculator
+<img src="./screenshots/02-gpa-planning.png" alt="GPA Card and Minimum GPA Calculator" valign="middle" align="middle">
 
-### Popup Menu (for settings configuration)
-<img src="https://i.ibb.co/V9dDgSt/extension-Store-Picture3.png" alt="Popup Menu" valign="middle" align="middle">
+### Minimum Grade Calculator
+<img src="./screenshots/03-minimum-score.png" alt="Minimum Grade Calculator" valign="middle" align="middle">
+
+### Custom Assignment Group Weighting
+<img src="./screenshots/04-custom-weighting.png" alt="Custom Assignment Group Weighting" valign="middle" align="middle">
+
+### Custom Assignment Group Drop Rules
+<img src="./screenshots/05-drop-rules.png" alt="Custom Assignment Group Drop Rules" valign="middle" align="middle">
 
 ## Next Steps 
 
