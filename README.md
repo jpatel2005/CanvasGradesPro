@@ -6,10 +6,13 @@
 
 [link-chrome]: https://chromewebstore.google.com/detail/canvasgradespro/llckodagdcbdenhnjkhkpeeeajodfldc 'Version published on Chrome Web Store'
 [link-firefox]: https://addons.mozilla.org/en-US/firefox/addon/canvasgradespro/ 'Version published on Mozilla Add-ons'
+[link-edge]: https://microsoftedge.microsoft.com/addons/detail/canvasgradespro/dkadhefpldiidbefcmcffhnfcdmkigfm 'Version published on Microsoft Edge Add-ons'
 
 [<img src="https://raw.githubusercontent.com/alrra/browser-logos/90fdf03c/src/chrome/chrome.svg" width="48" alt="Chrome" valign="middle">][link-chrome] [<img valign="middle" src="https://img.shields.io/chrome-web-store/v/llckodagdcbdenhnjkhkpeeeajodfldc.svg?label=%20">][link-chrome] and other Chromium browsers
 
 [<img src="https://raw.githubusercontent.com/alrra/browser-logos/90fdf03c/src/firefox/firefox.svg" width="48" alt="Firefox" valign="middle">][link-firefox] [<img valign="middle" src="https://img.shields.io/amo/v/canvasgradespro.svg?label=%20">][link-firefox]
+
+[<img src="https://raw.githubusercontent.com/alrra/browser-logos/90fdf03c/src/edge/edge.svg" width="48" alt="Edge" valign="middle">][link-edge] [<img valign="middle" src="https://img.shields.io/badge/dynamic/json?label=%20&query=$.version&url=https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/dkadhefpldiidbefcmcffhnfcdmkigfm&color=blue">][link-edge]
 
 ## Overview
 
