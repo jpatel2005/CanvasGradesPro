@@ -1338,8 +1338,24 @@ if (document.title === 'Dashboard') {
     gpaCard.style.display = 'none';
     gpaCard.appendChild(gpaCalculatorContainer);
     // Get all of the courses that the user has taken (that they can view or at least know the existance of)
-    const allCourses = (await fetchAllPages(`/api/v1/courses?per_page=100&include[]=term&state[]=unpublished&state[]=available&state[]=completed&state[]=deleted&enrollment_type=student`))
-    .filter(course => course.access_restricted_by_date !== true);
+    let allCourses = await fetchAllPages(`/api/v1/courses?per_page=100&include[]=term&state[]=unpublished&state[]=available&state[]=completed&state[]=deleted&enrollment_type=student`);
+    config.gpa ??= {};
+    const courseIds = new Set(allCourses.map(course => course.id.toString()));
+    for (const [id, { name, term }] of Object.entries(config.gpa)) {
+      if (!courseIds.has(id)) {
+        allCourses.push({
+          id: Number(id),
+          course_code: name,
+          term
+        });
+      }
+    }
+    for (const course of allCourses) {
+      course.course_code ??= course.name ?? config.gpa[course.id]?.name;
+      course.term ??= config.gpa[course.id]?.term;
+    }
+    // If the course name cannot be retrieved from Canvas or from config, then filter it out
+    allCourses = allCourses.filter(course => course.course_code !== undefined && course.course_code.trim() !== '');
     let gpaStandard = config.default_gpa_standard ?? default_gpa_standard;
     // Consider the user preference for adding the gpa card to the beginning or end of the dashboard card container
     if ((config.gpa_card?.position ?? 'first') === 'first') {
@@ -1401,6 +1417,7 @@ if (document.title === 'Dashboard') {
     // Store the current semester id (get the maximum semester id)
     const currentSemesterId = window.maxActiveSemesterId;
     const currentSemesterName = window.maxActiveSemesterName;
+    const canUseAutoGrade = course => course.term?.id === currentSemesterId && course.workflow_state === 'available' && course.access_restricted_by_date !== true;
     for (const course of allCourses) {
       if (course.term !== undefined && !badTermNames.includes(course.term.name) && window.semesters[course.term.id] === undefined) {
         window.semesters[course.term.id] = [course.term.name, 0, 0, 0];
@@ -1432,10 +1449,10 @@ if (document.title === 'Dashboard') {
         } else if (name === 'grade') {
           const dropdown = gradeDropdown.cloneNode(true);
           // If the term for the current course is not the most recent / current term, then remove the "auto" option from the dropdown
-          if (course.term === undefined || course.term.id !== currentSemesterId) {
+          if (!canUseAutoGrade(course)) {
             dropdown.querySelector('option[class="AUTO"]').remove();
           }
-          gridItem.dataset.semester_id = course.term.id;
+          gridItem.dataset.auto_allowed = canUseAutoGrade(course);
           gridItem.appendChild(dropdown);
         }
         gpaGrid.appendChild(gridItem);
@@ -1443,24 +1460,6 @@ if (document.title === 'Dashboard') {
     }
     // Store info relating to the missing course
     config.gpa_missing ??= []; 
-    for (const course of config.gpa_missing) {
-      if (window.semesters_missing[course.term] === undefined) {
-        window.semesters_missing[course.term] = [0, 0, 0];
-      }
-      // If the course does not have a grade, then treat it as special, or else, treat it as normal and contribute to semester score
-      if (course.grade === 'NG') {
-        window.semesters_missing[course.term][2] += Number(course.credits);
-      } else {
-        const courseGpa = gpaStandard[course.grade] ?? null;
-        if (course.grade === '' || courseGpa === null) {
-          window.gpaErrorMessage = `Grade is unknown for some courses. Check GPA config menu and "View / Configure Missing Courses" menu`;
-          window.semesters_missing[course.term][0] = -1;
-          continue;
-        }
-        window.semesters_missing[course.term][0] += Number(course.credits) * Number(courseGpa);
-        window.semesters_missing[course.term][1] += Number(course.credits);
-      }
-    }
     gpaGrid.classList.add('grid-container');
     // Set the subtitle for the current semester (tells the user what the "current semester" is)
     gpaCurrentSemesterName.textContent = currentSemesterName === '' ? '' : `Current Term: ${currentSemesterName}`;
@@ -1494,7 +1493,8 @@ if (document.title === 'Dashboard') {
     }
     // Add the missing courses to the semester dropdown
     const addMissingSemesterOptions = function() {
-      for (const semesterName of Object.keys(window.semesters_missing)) {
+      const semesters = new Set(config.gpa_missing.map(course => course.term));
+      for (const semesterName of semesters) {
         // Don't add the semester as it already exists (as a semester known by Canvas)
         if (window.semester_lookup[semesterName] !== undefined) {
           continue;
@@ -1508,19 +1508,26 @@ if (document.title === 'Dashboard') {
     }
     // Display the GPA of the semester in the semesters dropdown (returns true if it is a missing courses semester)
     const showSelectedSemesterGpa = function() {
-      let selectedSemesterData = window.semesters[window.semesterDropdownValue];
-      if (selectedSemesterData === undefined) {
+      const semester = window.semesterDropdownValue;
+      let selectedSemesterData = window.semesters[semester];
+      // Custom terms uses values ending in "-special"
+      if (selectedSemesterData === undefined && semester?.endsWith('-special')) {
         const semesterName = window.semesterDropdownValue.slice(0,-8);
-        selectedSemesterData = window.semesters_missing[semesterName];
-        gpaSemesterValue.textContent = selectedSemesterData[0] === -1 ? '⚠️' : (selectedSemesterData[1] === 0 ? 'N/A' : (Math.floor(1e3 * selectedSemesterData[0] / selectedSemesterData[1]) / 1e3).toFixed(3));
-        semesterCreditsValue.textContent = selectedSemesterData[0] === -1 ? '' : (selectedSemesterData[1] + selectedSemesterData[2]) + ' Credits';
-        gpaSemesterError.textContent = selectedSemesterData[0] === -1 ? `Credit count is unknown for some ${semesterName} courses` : '';
-        return true;
+        const missing = window.semesters_missing[semesterName];
+        if (missing !== undefined) {
+          selectedSemesterData = [semesterName, ...missing];
+        }
+      }
+      // The dropdown can be empty if there are no terms
+      if (selectedSemesterData === undefined) {
+        gpaSemesterValue.textContent = 'N/A';
+        semesterCreditsValue.textContent = '';
+        gpaSemesterError.textContent = '';
+        return;
       }
       gpaSemesterValue.textContent = selectedSemesterData[1] === -1 ? '⚠️' : (selectedSemesterData[2] === 0 ? 'N/A' : (Math.floor(1e3 * selectedSemesterData[1] / selectedSemesterData[2]) / 1e3).toFixed(3));
       semesterCreditsValue.textContent = selectedSemesterData[1] === -1 ? '' : (selectedSemesterData[2] + selectedSemesterData[3]) + ' Credits';
-      gpaSemesterError.textContent = selectedSemesterData[1] === -1 ? `Credit count is unknown for some ${selectedSemesterData[0]} courses` : '';
-      return false;
+      gpaSemesterError.textContent = selectedSemesterData[1] === -1 ? `${gpaErrorMessage.startsWith('Grade') ? 'Grade' : 'Credit count'} is unknown for some ${selectedSemesterData[0]} courses` : '';
     }
     addMissingSemesterOptions();
     content.appendChild(closeButton);
@@ -1686,7 +1693,6 @@ if (document.title === 'Dashboard') {
       if (cells.length % 5 !== 0) {
         throw new Error("Number of grid items should be divisible by 5.");
       }
-      const tmp = {};
       const data = [];
       for (let i = 0; i < cells.length; i+=5) {
         const courseNameVal = cells[i].value.trim()
@@ -1728,26 +1734,10 @@ if (document.title === 'Dashboard') {
           credits: Number(creditsVal),
           grade: gradeVal
         });
-        if (tmp[termVal] === undefined) {
-          tmp[termVal] = [0, 0, 0];
-        }
-        // If the course does not have a grade, then treat it as special, or else, treat it as normal and contribute to semester score
-        if (gradeVal === 'NG') {
-          tmp[termVal][2] += Number(creditsVal);
-        } else {
-          const courseGpa = gpaStandard[gradeVal] ?? null;
-          if (gradeVal === '' || courseGpa === null) {
-            window.gpaErrorMessage = `Grade is unknown for some courses. Check GPA config menu and "${gpaCalculatorMissingConfig.textContent}" menu`;
-            window.semesters_missing[termVal][0] = -1;
-            continue;
-          }
-          tmp[termVal][0] += Number(creditsVal) * Number(courseGpa);
-          tmp[termVal][1] += Number(creditsVal);
-        }
       }
-      window.semesters_missing = tmp;
+      config.gpa_missing = data;
       // Get initially selected option
-      const initialPos = !semestersDropdown.options[semestersDropdown.selectedIndex].classList.contains('semester-special') ? semestersDropdown.selectedIndex : -1;
+      const initialPos = !semestersDropdown.options[semestersDropdown.selectedIndex]?.classList.contains('semester-special') ? semestersDropdown.selectedIndex : -1;
       // Remove "old" missing semesters from the dropdown
       semestersDropdown.querySelectorAll('.semester-special').forEach(option => option.remove());
       // Add missing semesters to the dropdown
@@ -1755,14 +1745,12 @@ if (document.title === 'Dashboard') {
       window.semesterDropdownIndex = initialPos === -1 ? 0 : initialPos;
       semestersDropdown.selectedIndex = window.semesterDropdownIndex;
       window.semesterDropdownIndex = semestersDropdown.selectedIndex;
-      window.semesterDropdownValue = semestersDropdown.options[semestersDropdown.selectedIndex].value;
-      gpaSemesterSubTitle.textContent = semestersDropdown.options[semestersDropdown.selectedIndex].textContent;
+      window.semesterDropdownValue = semestersDropdown.options[semestersDropdown.selectedIndex]?.value;
+      gpaSemesterSubTitle.textContent = semestersDropdown.options[semestersDropdown.selectedIndex]?.textContent ?? 'N/A';
       gpaSemesterEditIcon.classList.replace('fa-save', 'fa-edit');
-      showSelectedSemesterGpa();
       // Processing was completed without finding any errors, so configure the label for a successful operation
       missingSaveChangesLabel.classList.remove('error');
       missingSaveChangesLabel.textContent = 'Changes saved successfully!';
-      config.gpa_missing = data;
       await saveConfig(config.gpa_missing, 'gpa_missing');
       await calculateGpa(false);
       setTimeout(() => {
@@ -1906,7 +1894,7 @@ if (document.title === 'Dashboard') {
           const dropdown = gradeDropdown.cloneNode(true);
           // Store the initial dropdown value, and set it for the newly created dropdown (if it's not in the newly created dropdown, use the blank option)
           const initial = elm.options[elm.selectedIndex].textContent || 'blank';
-          if (+elm.parentElement.dataset.semester_id !== currentSemesterId) {
+          if (elm.parentElement.dataset.auto_allowed !== 'true') {
             dropdown.querySelector('option[class="AUTO"]').remove();
           }
           // Replace old dropdown menu with the newly rebuilt one based on the new gpa standard
@@ -2003,30 +1991,17 @@ if (document.title === 'Dashboard') {
         return;
       }
       minGpaMessage.textContent = '\u200b';
-      const data = Object.values(window.semesters);
-      let qualityPoints = -window.semesters[currentSemesterId][1];
-      let credits = 0;
-      for (const termData of data) {
-        if (termData[1] === -1) {
-          minGpaMessage.textContent = "Please use non-negative numerical values for your desired GPA";
-          minGpaRequired.textContent = '';
-          const oldTableContainer = minGpaContent.querySelector('#min-gpa-table-container');
-          if (oldTableContainer !== null) {
-            oldTableContainer.replaceChildren();
-          }
-          return;
-        }
-        qualityPoints += termData[1];
-        credits += termData[2];
+      const currentTerm = window.semesters[currentSemesterId];
+      // Check that current term exists and has credits, that there are no errors, and that there are no courses with missing grades
+      if ((currentTerm?.[2] ?? 0) === 0 || window.gpaErrorMessage !== '' || window.gpaBadCourses.size !== 0) {
+        minGpaMessage.textContent = window.gpaErrorMessage || (window.gpaBadCourses.size !== 0 ? `GPA standard is missing the following grades: ${[...window.gpaBadCourses].join(', ')}` : 'No graded credits were found for the current term');
+        minGpaRequired.textContent = '';
+        minGpaContent.querySelector('#min-gpa-table-container')?.replaceChildren();
+        return;
       }
-      if (credits === 0) {
-        const oldTableContainer = minGpaContent.querySelector('#min-gpa-table-container');
-        if (oldTableContainer !== null) {
-          oldTableContainer.replaceChildren();
-        }
-        console.error('Zero credits were detected for the current term', window.semesters);
-      }
-      const minGpa = Math.max(0, Math.floor(1e3 * ((+desiredGpa * credits - qualityPoints) / window.semesters[currentSemesterId][2])) / 1e3);
+      const qualityPoints = window.gpaTotals.qualityPoints - currentTerm[1];
+      const credits = window.gpaTotals.credits;
+      const minGpa = Math.max(0, Math.floor(1e3 * ((+desiredGpa * credits - qualityPoints) / currentTerm[2])) / 1e3);
       const maxLetterGrade = getMaxLetterGrade(gpaStandard);
       minGpaRequired.textContent = Number(minGpa.toFixed(3)) + (gpaStandard[maxLetterGrade] < minGpa ? ' 😭' : (minGpa === 0 ? ' 🗿' : ''));
       // If the user cannot get their desired gpa or if they don't have to do anything to get it, then exit early
@@ -2143,11 +2118,19 @@ if (document.title === 'Dashboard') {
       config.gpa_config.include_current_semester = gpaCumulativeCheckbox.checked;
       await saveConfig(config.gpa_config, 'gpa_config');
     });
-    // Set the initial index for the semesters dropdown (this shouldn't fail since the "current semester" has to exist to be the current semester)
-    semestersDropdown.querySelector(`option[class="semester-${currentSemesterId}"]`).selected = true;
+    // Set the initial index for the semesters dropdown
+    const initialSemester = semestersDropdown.querySelector(`option[class="semester-${currentSemesterId}"]`) ?? semestersDropdown.options[0];
+    if (initialSemester !== undefined) {
+      initialSemester.selected = true;
+    }
     window.semesterDropdownIndex = semestersDropdown.selectedIndex;
+    window.semesterDropdownValue = initialSemester?.value;
+    gpaSemesterSubTitle.textContent = initialSemester?.textContent ?? 'N/A';
     // Add event listeners for controlling different elements relating to the gpa calculator popup
     gpaSemesterEditIcon.addEventListener('click', () => {
+      if (semestersDropdown.options.length === 0) {
+        return;
+      }
       // Check if we are saving or editing
       if (gpaSemesterEditIcon.classList.contains('fa-save')) { // Saving mode
         const dropdown = gpaSemesterEditIcon.nextElementSibling.firstElementChild;
@@ -2178,8 +2161,7 @@ if (document.title === 'Dashboard') {
     });
     saveChangesButton.addEventListener('click', async () => {
       // Store the values for your semester class credits and gpa scores "temporarily" (this object will replace the object at window.semesters if the input is good)
-      const tmp = {};
-      const gpaData = {};
+      const gpaData = { ...config.gpa };
       for (const course of allCourses) {
         const courseID = course.id;
         const credits = document.querySelector(`.row-${courseID}.credits > input`).value.trim();
@@ -2197,19 +2179,11 @@ if (document.title === 'Dashboard') {
           saveChangesLabel.textContent = 'Changes failed to save! Please provide a grade for all of your courses';
           return;
         }
-        if (course.term !== undefined && !badTermNames.includes(course.term.name)) {
-          if (tmp[course.term.id] === undefined) {
-            tmp[course.term.id] = [course.term.name, 0, 0, 0];
-          }
-          tmp[course.term.id][1] += Number(credits);
-          tmp[course.term.id][2] += Number(credits) * Number(courseGpa);
-        }
-        gpaData[courseID] = { credits, letter_grade: letterGrade };
+        gpaData[courseID] = { ...config.gpa[courseID], credits, letter_grade: letterGrade };
       }
       // Processing was completed without finding any errors, so configure the label for a successful operation
       saveChangesLabel.classList.remove('error');
       saveChangesLabel.textContent = 'Changes saved successfully!';
-      window.semesters = tmp;
       config.gpa = gpaData;
       await saveConfig(gpaData, 'gpa');
       await calculateGpa(false);
@@ -2223,6 +2197,7 @@ if (document.title === 'Dashboard') {
       let missingCreditTotal = 0;
       let gpaTotal = 0;
       window.semesters = {};
+      window.semesters_missing = {};
       window.currentTermCredits = [];
       window.gpaErrorMessage = '';
       window.gpaBadCourses = new Set();
@@ -2235,127 +2210,136 @@ if (document.title === 'Dashboard') {
           window.semesters[course.term.id] = [course.term.name, 0, 0, 0];
         }
         const courseConfig = config[course.id] ?? {};
-        const classGradingStandard = course.grading_standard_id !== null && course.grading_standard_id !== undefined ? (await retrieveGradingStandard(course.id, course.grading_standard_id)) : null;
+        const termData = window.semesters[course.term?.id];
+        // const classGradingStandard = course.grading_standard_id !== null && course.grading_standard_id !== undefined ? (await retrieveGradingStandard(course.id, course.grading_standard_id)) : null;
         if (course.term?.id === currentSemesterId) {
           window.currentTermCredits.push(Number(config.gpa?.[course.id]?.credits ?? -1));
         }
-        // Store flag for detecting if the current course is using "AUTO" and is a current term course
-        let autoFlag = false;
-        // Use a IIFE to compute the letter grade for a given course if the grade is in computed grades "cache" or in chrome storage
-        const letterGrade = (function() {
-          // Implementation may be subjectively desired -- if a new term is introduced before the current term ends (e.g. from registering for your courses for the next term)
-          // then the "old" current term should still have grades calculated via the dashboard grade, which should be used for the gpa calculation.
-          // However, doing so would cause valid grades to be overriden from your history when the semester ends, so I will not being doing this for now
-          // Current approach to this is retrieving the current term using the maximum course term id from the dashboard course cards 
-          const tmp = config.gpa?.[course.id]?.letter_grade ?? '';
-          if ((tmp === 'AUTO' || tmp === '') && course.term?.id === currentSemesterId) {
-            autoFlag = true;
-            return null;
-          }
-          // If this executes, this means that grade is bad "AUTO" (not a course in the current term)
-          if (tmp === 'AUTO') {
-            return null;
-          }
-          // In the final base case, tmp is either '' (blank) or set
-          return tmp === '' ? null : tmp;
-        })() ?? await (async function() {
+        const savedGrade = config.gpa[course.id]?.letter_grade ?? '';
+        const autoFlag = canUseAutoGrade(course) && (savedGrade === 'AUTO' || savedGrade === '');
+        // Clear AUTO when the course grade requires a manually entered final grade
+        let letterGrade = savedGrade === 'AUTO' ? '' : savedGrade;
+        if (autoFlag) {
+          const classGradingStandard = course.grading_standard_id !== null && course.grading_standard_id !== undefined ? await retrieveGradingStandard(course.id, course.grading_standard_id) : null;
           const grade = window.computedGrades[course.id.toString()] ?? (await getCourseGrade(course, courseConfig, null, null, false))[0];
-          if (grade === 'NG' && !autoFlag) {
-            return null; 
-          }
           const tmpLetterGrade = await getLetterGrade(courseConfig.grading_standard ?? classGradingStandard ?? config.default_grading_standard ?? default_grading_standard, grade) ?? null;
           // If there is no calculated grade but the grade is set to "AUTO", then use the max grade available. 
-          // If the letter grade could not be computed, use null, or else just use the computed letter grade
-          return tmpLetterGrade === null ? maxLetterGrade : (tmpLetterGrade === 'N/A' ? null : tmpLetterGrade);
-        })() ?? '';
+          // If the letter grade could not be computed, use blank, or else just use the computed letter grade
+          letterGrade = tmpLetterGrade === null ? maxLetterGrade : (tmpLetterGrade === 'N/A' ? '' : tmpLetterGrade);
+        }
         const courseGpa = gpaStandard[letterGrade] ?? null;
         const credits = config.gpa?.[course.id]?.credits ?? null;
         window.courseNames.add(course.course_code.trim());
-        // On the initial case (for page load, replace any blank grades and any invalid "AUTO" grades with the manually calculated grade)
-        if (initialCall && !autoFlag) {
-          // Make sure to initialize the nested config.gpa object if it is not defined (using nullish coalescing assignment aka ??=)
-          config.gpa ??= {};
+        // On the initial case (for page load, save course names and terms and replace any invalid "AUTO" grades with blanks)
+        if (initialCall) {
           config.gpa[course.id] ??= {};
-          config.gpa[course.id].letter_grade = letterGrade ?? '';
-        } 
+          config.gpa[course.id].name = course.course_code;
+          if (course.term !== undefined) {
+            config.gpa[course.id].term = {
+              id: course.term.id,
+              name: course.term.name
+            }
+          }
+          if (!autoFlag) {
+            config.gpa[course.id].letter_grade = letterGrade;
+          }
+        }
         // Missing grade when using AUTO flag
-        if (course.term !== undefined && Number(credits) !== 0 && courseGpa === null && autoFlag) {
+        if (Number(credits) !== 0 && courseGpa === null && autoFlag) {
           // Add missing grades to the set (used for informing the user of missing letter grades)
           window.gpaBadCourses.add(letterGrade);
-          window.semesters[course.term.id][1] = -1;
+          if (termData !== undefined) {
+            termData[1] = -1;
+          }
           continue;
         }
         // Missing grade for when the letter grade is set (explicit, not AUTO)
-        if (course.term !== undefined && Number(credits) !== 0 && letterGrade !== 'NG' && (letterGrade === '' || courseGpa === null)) {
+        if (Number(credits) !== 0 && letterGrade !== 'NG' && (letterGrade === '' || courseGpa === null)) {
           window.gpaErrorMessage = 'Grade is unknown for some courses';
           // If the course is a valid course, then mark the semester for the course as invalid for grades
-          window.semesters[course.term.id][1] = -1;
+          if (termData !== undefined) {
+            termData[1] = -1;
+          }
           continue;
         }
         document.querySelector(`.row-${course.id} option[class="${autoFlag ? 'AUTO' : (letterGrade === '' || courseGpa === null ? 'blank' : letterGrade)}"]`).selected = true;
         // If the course is an valid course with credits that haven't been set, then mark the semester for the course as invalid and set the error message
-        if (course.term !== undefined && credits === null && window.semesters[course.term.id] !== undefined) {
+        if (credits === null) {
           window.gpaErrorMessage = 'Credit count is unknown for some courses';
-          window.semesters[course.term.id][1] = -1;
+          if (termData !== undefined) {
+            termData[1] = -1;
+          }
           continue;
         }
         creditTotal += Number(credits);
         gpaTotal += Number(courseGpa) * Number(credits);
-        if (course.term !== undefined && (window.semesters[course.term.id] ?? [-1,-1])[1] !== -1) {
-          window.semesters[course.term.id][1] += Number(courseGpa) * Number(credits);
-          window.semesters[course.term.id][2] += Number(credits);
+        if (termData !== undefined && termData[1] !== -1) {
+          termData[1] += Number(courseGpa) * Number(credits);
+          termData[2] += Number(credits);
         }
       }
       for (const course of config.gpa_missing) {
+        window.semesters_missing[course.term] ??= [0, 0, 0];
+        const missingTerm = window.semesters_missing[course.term];
+        const termData = window.semesters[window.semester_lookup[course.term]];
         if (window.courseNames.has(course.name)) {
           window.gpaErrorMessage = `Course name "${course.name}" is already in use. Fix in "${gpaCalculatorMissingConfig.textContent}" menu`;
-          window.semesters_missing[course.term][0] = -1;
-        }
-        const semesterID = window.semester_lookup[course.term];
-        // If this is not an existing semester (established via Canvas), then nothing more to do 
-        if (semesterID === undefined) {
-          missingCreditTotal += Number(course.credits);
+          missingTerm[0] = -1;
           continue;
         }
         const courseGpa = gpaStandard[course.grade] ?? null;
         if (course.grade === '' || (course.grade !== 'NG' && courseGpa === null)) {
           window.gpaErrorMessage = `Grade is unknown for some courses. Check GPA config menu and "${gpaCalculatorMissingConfig.textContent}" menu`;
-          window.semesters_missing[course.term][0] = -1;
+          missingTerm[0] = -1;
+          if (termData !== undefined) {
+            termData[1] = -1;
+          }
           continue;
         }
         // If the course is not graded, then treat it as special, or else treat it as normal 
         if (course.grade === 'NG') {
-          window.semesters[semesterID][3] += Number(course.credits);
+          missingTerm[2] += Number(course.credits);
+          if (termData !== undefined) {
+            termData[3] += Number(course.credits);
+          }
           missingCreditTotal += Number(course.credits);
         } else {
-          window.semesters[semesterID][1] += Number(course.credits) * Number(courseGpa);
-          window.semesters[semesterID][2] += Number(course.credits);
+          if (missingTerm[0] !== -1) {
+            missingTerm[0] += Number(course.credits) * Number(courseGpa);
+          }
+          missingTerm[1] += Number(course.credits);
+          if (termData !== undefined && termData[1] !== -1) {
+            termData[1] += Number(course.credits) * Number(courseGpa);
+            termData[2] += Number(course.credits);
+          }
           gpaTotal += Number(course.credits) * Number(courseGpa);
           creditTotal += Number(course.credits);
         }
       }
+      window.gpaTotals = { qualityPoints: gpaTotal, credits: creditTotal };
       // For this, we will be truncating at two decimal places (UMD uses 3 decimal truncation)
-      const cumulativeGpa = (Math.floor(1e3 * gpaTotal / creditTotal) / 1e3).toFixed(3);
-      // Get the gpa for the term selected in the current term dropdown
-      const selectedSemesterData = window.semesters[window.semesterDropdownValue ?? currentSemesterId];
+      const cumulativeGpa = creditTotal === 0 ? 'N/A' : (Math.floor(1e3 * gpaTotal / creditTotal) / 1e3).toFixed(3);
+
+      const currentTerm = window.semesters[currentSemesterId];
+      const currentCredits = currentTerm?.[2] ?? 0;
+      const currentPoints = currentTerm?.[1] ?? 0;
+      const currentNonGpaCredits = currentTerm?.[3] ?? 0;
       // Calculate the gpa without the current/most recent semester (if the student has no courses prior to the current semester, then display N/A)
-      const cumulativeGpaAlt = (creditTotal - window.semesters[currentSemesterId][2]) === 0 ? 'N/A' : (Math.floor(1e3 * (gpaTotal - window.semesters[currentSemesterId][1]) / (creditTotal - window.semesters[currentSemesterId][2])) / 1e3).toFixed(3);
-      const badGpaFlag = isNaN(cumulativeGpa) || window.gpaErrorMessage !== '';
+      const cumulativeGpaAlt = creditTotal - currentCredits === 0 ? 'N/A' : (Math.floor(1e3 * (gpaTotal - currentPoints) / (creditTotal - currentCredits)) / 1e3).toFixed(3);
+      const badGpaFlag = (creditTotal !== 0 && isNaN(cumulativeGpa)) || window.gpaErrorMessage !== '';
       // Store the cumulative gpa with the current semester and without the current semester
       window.currentSemesterGpa = badGpaFlag ? ['⚠️','⚠️'] : [cumulativeGpa, cumulativeGpaAlt] // [gpa WITH current sem, gpa WITHOUT current sem]
-      window.currentCredits = badGpaFlag ? ['',''] : [creditTotal + missingCreditTotal, creditTotal - window.semesters[currentSemesterId][2] + missingCreditTotal]; // [credits WITH current sem, credits WITHOUT current sem]
+      window.currentCredits = badGpaFlag ? ['',''] : [creditTotal + missingCreditTotal, creditTotal - currentCredits - currentNonGpaCredits + missingCreditTotal]; // [credits WITH current sem, credits WITHOUT current sem]
       gpaCumulativeValue.textContent = badGpaFlag ? '⚠️' : window.currentSemesterGpa[gpaCumulativeCheckbox.checked ? 0 : 1];
       cumulativeCreditsValue.textContent = badGpaFlag ? '' : window.currentCredits[gpaCumulativeCheckbox.checked ? 0 : 1] + ' Credits';
       gpaCalculatorEditConfig.textContent = badGpaFlag ? 'Edit GPA Config ⚠️' : 'Edit GPA Config';
       gpaCumulativeError.textContent = window.gpaErrorMessage;
-      gpaSemesterValue.textContent = selectedSemesterData[1] === -1 ? '⚠️' : (selectedSemesterData[2] === 0 ? 'N/A' : (Math.floor(1e3 * selectedSemesterData[1] / selectedSemesterData[2]) / 1e3).toFixed(3));
-      semesterCreditsValue.textContent = selectedSemesterData[1] === -1 ? '' : (selectedSemesterData[2] + selectedSemesterData[3]) + ' Credits';
-      gpaSemesterError.textContent = selectedSemesterData[1] === -1 ? `${window.gpaErrorMessage.startsWith('Grade') ? 'Grade' : 'Credit count'} is unknown for some "${selectedSemesterData[0]}" courses` : '';
+      showSelectedSemesterGpa();
       // If there are grades that are missing from the gpa mapping, then check the following conditions:
       // If the selected semester is the current term OR if the cumulative GPA is including the current term, then reveal the missing grades in an error message (override any other existing error message)
       if (window.gpaBadCourses.size !== 0) {
         // Check if the error message should display for the term gpa
-        if (selectedSemesterData[0] === currentSemesterName) {
+        if (window.semesterDropdownValue === currentSemesterId.toString()) {
           gpaSemesterError.textContent = `GPA standard is missing the following grades: ${[...window.gpaBadCourses].join(', ')}`;
         }
         // Check if the error message should display for the cumulative gpa
