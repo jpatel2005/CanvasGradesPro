@@ -2471,7 +2471,7 @@ if (document.title === 'Dashboard') {
           validWeights = false;
         }
         if (isNaN(rowWeight)) {
-          console.error(`Row weight is invalid. Excepted number but received ${row.lastElementChild.textContent.replace('%', '')} instead (this shouldn't happen)`);
+          console.error(`Row weight is invalid. Expected number but received ${row.lastElementChild.textContent.replace('%', '')} instead (this shouldn't happen)`);
         }
       });
       if (!validWeights) {
@@ -2481,12 +2481,15 @@ if (document.title === 'Dashboard') {
       // If the weights are not valid, then reset to class default and override config
       // Use original weights map to update rows weights
       // Or else just use the weights from the config
+      let weightSum = 0;
       tableRows.forEach((row,idx) => {
         if (idx === tableRows.length - 1) {
           return;
         }
-        row.lastElementChild.textContent = !validWeights ? originalWeights[row.firstElementChild.textContent] + '%' : config.weights[row.firstElementChild.textContent] + '%';
+        row.lastElementChild.textContent = config.weights[row.firstElementChild.textContent] + '%';
+        weightSum += +config.weights[row.firstElementChild.textContent];
       });
+      tableRows[tableRows.length-1].lastElementChild.textContent = +weightSum.toFixed(2) + '%';
     }
     if (config.use_weighting === undefined) {
       config.use_weighting = course.apply_assignment_group_weights || !isObjectEmpty(config.weights);
@@ -2848,8 +2851,10 @@ if (document.title === 'Dashboard') {
       } else if (resetWeights.checked) {
         // Get the weights for each group
         const groupWeights = {};
+        let weightSum = 0;
         for (const group of courseAssignments) {
           groupWeights[group.name] = group.group_weight;
+          weightSum += group.group_weight;
         }
         // Update the rows of the weights table using the weights that were just placed into a dictionary
         const weightRows = document.querySelectorAll('table.summary:not([id]) tbody tr:not(:last-child)');
@@ -2859,6 +2864,7 @@ if (document.title === 'Dashboard') {
           gradeCell.replaceChildren();
           gradeCell.textContent = groupWeights[row.firstElementChild.textContent] + '%';
         }
+        table.querySelector('tbody tr:last-child td').textContent = +weightSum.toFixed(2) + '%';
         closeWeightEditor();
         // Delete weights from config (use config set by course unless user explicitly sets weights)
         delete config.weights
@@ -2925,6 +2931,7 @@ if (document.title === 'Dashboard') {
       if (scaledWeightSum !== 10000) {
         console.error('Scaled sum is not 100. Something went wrong', scaledWeightSum);
       }
+      table.querySelector('tbody tr:last-child td').textContent = '100%';
       // Hide error message on success
       closeWeightEditor();
       // If no weighting existing before save or if not all weights are the same, then save weighting normally, else drop weighting from config
