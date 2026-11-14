@@ -10,6 +10,28 @@ const isObjectEmpty = function(obj) {
   return true;
 }
 
+/*
+ * Font Awesome Free 5.15.4 by @fontawesome
+ * CC BY 4.0: https://fontawesome.com/license/free
+ */
+const SVG_ICONS = {
+  "eye": [576, "M572.52 241.4C518.29 135.59 410.93 64 288 64S57.68 135.64 3.48 241.41a32.35 32.35 0 0 0 0 29.19C57.71 376.41 165.07 448 288 448s230.32-71.64 284.52-177.41a32.35 32.35 0 0 0 0-29.19zM288 400a144 144 0 1 1 144-144 143.93 143.93 0 0 1-144 144zm0-240a95.31 95.31 0 0 0-25.31 3.79 47.85 47.85 0 0 1-66.9 66.9A95.78 95.78 0 1 0 288 160z"],
+  "eye-slash": [640, "M320 400c-75.85 0-137.25-58.71-142.9-133.11L72.2 185.82c-13.79 17.3-26.48 35.59-36.72 55.59a32.35 32.35 0 0 0 0 29.19C89.71 376.41 197.07 448 320 448c26.91 0 52.87-4 77.89-10.46L346 397.39a144.13 144.13 0 0 1-26 2.61zm313.82 58.1l-110.55-85.44a331.25 331.25 0 0 0 81.25-102.07 32.35 32.35 0 0 0 0-29.19C550.29 135.59 442.93 64 320 64a308.15 308.15 0 0 0-147.32 37.7L45.46 3.37A16 16 0 0 0 23 6.18L3.37 31.45A16 16 0 0 0 6.18 53.9l588.36 454.73a16 16 0 0 0 22.46-2.81l19.64-25.27a16 16 0 0 0-2.82-22.45zm-183.72-142l-39.3-30.38A94.75 94.75 0 0 0 416 256a94.76 94.76 0 0 0-121.31-92.21A47.65 47.65 0 0 1 304 192a46.64 46.64 0 0 1-1.54 10l-73.61-56.89A142.31 142.31 0 0 1 320 112a143.92 143.92 0 0 1 144 144c0 21.63-5.29 41.79-13.9 60.11z"],
+  "question-circle": [512, "M504 256c0 136.997-111.043 248-248 248S8 392.997 8 256C8 119.083 119.043 8 256 8s248 111.083 248 248zM262.655 90c-54.497 0-89.255 22.957-116.549 63.758-3.536 5.286-2.353 12.415 2.715 16.258l34.699 26.31c5.205 3.947 12.621 3.008 16.665-2.122 17.864-22.658 30.113-35.797 57.303-35.797 20.429 0 45.698 13.148 45.698 32.958 0 14.976-12.363 22.667-32.534 33.976C247.128 238.528 216 254.941 216 296v4c0 6.627 5.373 12 12 12h56c6.627 0 12-5.373 12-12v-1.333c0-28.462 83.186-29.647 83.186-106.667 0-58.002-60.165-102-116.531-102zM256 338c-25.365 0-46 20.635-46 46 0 25.364 20.635 46 46 46s46-20.636 46-46c0-25.365-20.635-46-46-46z"],
+  "edit": [576, "M402.6 83.2l90.2 90.2c3.8 3.8 3.8 10 0 13.8L274.4 405.6l-92.8 10.3c-12.4 1.4-22.9-9.1-21.5-21.5l10.3-92.8L388.8 83.2c3.8-3.8 10-3.8 13.8 0zm162-22.9l-48.8-48.8c-15.2-15.2-39.9-15.2-55.2 0l-35.4 35.4c-3.8 3.8-3.8 10 0 13.8l90.2 90.2c3.8 3.8 10 3.8 13.8 0l35.4-35.4c15.2-15.3 15.2-40 0-55.2zM384 346.2V448H64V128h229.8c3.2 0 6.2-1.3 8.5-3.5l40-40c7.6-7.6 2.2-20.5-8.5-20.5H48C21.5 64 0 85.5 0 112v352c0 26.5 21.5 48 48 48h352c26.5 0 48-21.5 48-48V306.2c0-10.7-12.9-16-20.5-8.5l-40 40c-2.2 2.3-3.5 5.3-3.5 8.5z"],
+  "save": [448, "M433.941 129.941l-83.882-83.882A48 48 0 0 0 316.118 32H48C21.49 32 0 53.49 0 80v352c0 26.51 21.49 48 48 48h352c26.51 0 48-21.49 48-48V163.882a48 48 0 0 0-14.059-33.941zM224 416c-35.346 0-64-28.654-64-64 0-35.346 28.654-64 64-64s64 28.654 64 64c0 35.346-28.654 64-64 64zm96-304.52V212c0 6.627-5.373 12-12 12H76c-6.627 0-12-5.373-12-12V108c0-6.627 5.373-12 12-12h228.52c3.183 0 6.235 1.264 8.485 3.515l3.48 3.48A11.996 11.996 0 0 1 320 111.48z"],
+  "plus": [448, "M416 208H272V64c0-17.67-14.33-32-32-32h-32c-17.67 0-32 14.33-32 32v144H32c-17.67 0-32 14.33-32 32v32c0 17.67 14.33 32 32 32h144v144c0 17.67 14.33 32 32 32h32c17.67 0 32-14.33 32-32V304h144c17.67 0 32-14.33 32-32v-32c0-17.67-14.33-32-32-32z"],
+  "plus-circle": [512, "M256 8C119 8 8 119 8 256s111 248 248 248 248-111 248-248S393 8 256 8zm144 276c0 6.6-5.4 12-12 12h-92v92c0 6.6-5.4 12-12 12h-56c-6.6 0-12-5.4-12-12v-92h-92c-6.6 0-12-5.4-12-12v-56c0-6.6 5.4-12 12-12h92v-92c0-6.6 5.4-12 12-12h56c6.6 0 12 5.4 12 12v92h92c6.6 0 12 5.4 12 12v56z"],
+  "trash": [448, "M432 32H312l-9.4-18.7A24 24 0 0 0 281.1 0H166.8a23.72 23.72 0 0 0-21.4 13.3L136 32H16A16 16 0 0 0 0 48v32a16 16 0 0 0 16 16h416a16 16 0 0 0 16-16V48a16 16 0 0 0-16-16zM53.2 467a48 48 0 0 0 47.9 45h245.8a48 48 0 0 0 47.9-45L416 128H32z"],
+  "calculator": [448, "M400 0H48C22.4 0 0 22.4 0 48v416c0 25.6 22.4 48 48 48h352c25.6 0 48-22.4 48-48V48c0-25.6-22.4-48-48-48zM128 435.2c0 6.4-6.4 12.8-12.8 12.8H76.8c-6.4 0-12.8-6.4-12.8-12.8v-38.4c0-6.4 6.4-12.8 12.8-12.8h38.4c6.4 0 12.8 6.4 12.8 12.8v38.4zm0-128c0 6.4-6.4 12.8-12.8 12.8H76.8c-6.4 0-12.8-6.4-12.8-12.8v-38.4c0-6.4 6.4-12.8 12.8-12.8h38.4c6.4 0 12.8 6.4 12.8 12.8v38.4zm128 128c0 6.4-6.4 12.8-12.8 12.8h-38.4c-6.4 0-12.8-6.4-12.8-12.8v-38.4c0-6.4 6.4-12.8 12.8-12.8h38.4c6.4 0 12.8 6.4 12.8 12.8v38.4zm0-128c0 6.4-6.4 12.8-12.8 12.8h-38.4c-6.4 0-12.8-6.4-12.8-12.8v-38.4c0-6.4 6.4-12.8 12.8-12.8h38.4c6.4 0 12.8 6.4 12.8 12.8v38.4zm128 128c0 6.4-6.4 12.8-12.8 12.8h-38.4c-6.4 0-12.8-6.4-12.8-12.8V268.8c0-6.4 6.4-12.8 12.8-12.8h38.4c6.4 0 12.8 6.4 12.8 12.8v166.4zm0-256c0 6.4-6.4 12.8-12.8 12.8H76.8c-6.4 0-12.8-6.4-12.8-12.8V76.8C64 70.4 70.4 64 76.8 64h294.4c6.4 0 12.8 6.4 12.8 12.8v102.4z"],
+};
+
+const setSvgIcon = function(element, name) {
+  const [width, path] = SVG_ICONS[name];
+  element.classList.add('canvas-grades-pro-icon');
+  element.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 512" width="${width / 512}em" height="1em" aria-hidden="true" focusable="false"><path fill="currentColor" d="${path}"></path></svg>`;
+}
+
 const getSize = obj => new Blob([JSON.stringify(obj)]).size;
 // Matches non-negative decimal numbers
 const NON_NEGATIVE_NUMBER = /^((\d+(\.(\d+)?)?)|(\.\d+))$/;
@@ -1218,6 +1240,7 @@ if (document.title === 'Dashboard') {
     gpaCalculatorToggleEye.id = 'eye-icon';
     const gpaCalculatorEyeIcon = document.createElement('i');
     gpaCalculatorEyeIcon.classList.add('fa', config.gpa_config?.gpa_view === false ? 'fa-eye-slash' : 'fa-eye');
+    setSvgIcon(gpaCalculatorEyeIcon, config.gpa_config?.gpa_view === false ? 'eye-slash' : 'eye');
     const gpaCumulativeTitle = document.createElement('div');
     gpaCumulativeTitle.classList.add('gpa-title');
     gpaCumulativeTitle.textContent = 'Cumulative GPA';
@@ -1247,6 +1270,7 @@ if (document.title === 'Dashboard') {
     // Create tooltip for providing information about the different buttons
     const gpaCalculatorInfo = document.createElement('i');
     gpaCalculatorInfo.classList.add('fas', 'fa-question-circle');
+    setSvgIcon(gpaCalculatorInfo, 'question-circle');
     const gpaCalculatorInfoText = document.createElement('div');
     gpaCalculatorInfoText.id = 'gpa-calculator-info-text'
     gpaCalculatorInfoText.innerHTML = '<i><u>Edit GPA Config:</u></i> Set credits and grades for your courses<br><i><u>Edit GPA Standard:</u></i> Set letter grade to GPA mapping<br><i><u>Calculate Min Gpa:</u></i> Minimum GPA this term for target cumulative GPA';
@@ -1284,6 +1308,7 @@ if (document.title === 'Dashboard') {
     const gpaSemesterSubTitle = document.createElement('div');
     const gpaSemesterEditIcon = document.createElement('i');
     gpaSemesterEditIcon.classList.add('fas', 'fa-edit');
+    setSvgIcon(gpaSemesterEditIcon, 'edit');
     gpaSemesterSubTitle.textContent = '';
     gpaSemesterSubContainer.appendChild(gpaSemesterEditIcon);
     gpaSemesterSubContainer.appendChild(gpaSemesterSubTitle);
@@ -1319,6 +1344,7 @@ if (document.title === 'Dashboard') {
       gpaCalculatorToggleText.textContent = state ? 'Show GPA' : 'Hide GPA';
       gpaCalculatorEyeIcon.classList.add(state ? 'fa-eye-slash' : 'fa-eye');
       gpaCalculatorEyeIcon.classList.remove(state ? 'fa-eye' : 'fa-eye-slash');
+      setSvgIcon(gpaCalculatorEyeIcon, state ? 'eye-slash' : 'eye');
       if (config.gpa_config === undefined) {
         config.gpa_config = {};
       }
@@ -1572,6 +1598,7 @@ if (document.title === 'Dashboard') {
     missingSaveChangesLabel.text = '\u200b';
     addRowText.textContent = 'ADD ROW';
     addRowButton.classList.add('fas', 'fa-plus');
+    setSvgIcon(addRowButton, 'plus');
     addRowButton.style.margin = '6px';
     addRowContainer.appendChild(addRowButton);
     addRowContainer.appendChild(addRowText);
@@ -1656,6 +1683,7 @@ if (document.title === 'Dashboard') {
         } else if (name === '') {
           const trashIcon = document.createElement('i');
           trashIcon.classList.add('fas', 'fa-trash');
+          setSvgIcon(trashIcon, 'trash');
           trashIcon.style.height = '20px';
           trashIcon.style.margin = '10px 0';
           trashIcon.style.color = 'firebrick';
@@ -1748,6 +1776,7 @@ if (document.title === 'Dashboard') {
       window.semesterDropdownValue = semestersDropdown.options[semestersDropdown.selectedIndex]?.value;
       gpaSemesterSubTitle.textContent = semestersDropdown.options[semestersDropdown.selectedIndex]?.textContent ?? 'N/A';
       gpaSemesterEditIcon.classList.replace('fa-save', 'fa-edit');
+      setSvgIcon(gpaSemesterEditIcon, 'edit');
       // Processing was completed without finding any errors, so configure the label for a successful operation
       missingSaveChangesLabel.classList.remove('error');
       missingSaveChangesLabel.textContent = 'Changes saved successfully!';
@@ -1802,6 +1831,7 @@ if (document.title === 'Dashboard') {
     const gpaStandardButton = document.createElement('i');    
     gpaStandardButton.id = 'gpa-standard-button';
     gpaStandardButton.classList.add('fas', 'fa-edit', 'canvas-grades-pro');
+    setSvgIcon(gpaStandardButton, 'edit');
     const gpaStandardButtonContainer = document.createElement('div');
     gpaStandardButtonContainer.id = 'gpa-standard-button-container';
     gpaStandardButtonContainer.classList.add('canvas-grades-pro');
@@ -1826,6 +1856,7 @@ if (document.title === 'Dashboard') {
         }
         gpaStandardInput.value = str.trim();
         gpaStandardButton.classList.replace('fa-edit', 'fa-save');
+        setSvgIcon(gpaStandardButton, 'save');
         gpaStandardInput.style.display = '';
         gpaStandardTable.style.display = 'none';
         gpaStandardButtonLabel.textContent = 'Save GPA Standard';
@@ -1933,6 +1964,7 @@ if (document.title === 'Dashboard') {
         gpaStandardInputMessage.textContent = '';
         gpaStandardInputMessage.style.display = '';
         gpaStandardButton.classList.replace('fa-save', 'fa-edit');
+        setSvgIcon(gpaStandardButton, 'edit');
         gpaStandardInput.style.display = 'none';
         gpaStandardTable.style.display = '';
         gpaStandardButtonLabel.textContent = 'Edit GPA Standard';
@@ -2138,12 +2170,14 @@ if (document.title === 'Dashboard') {
         window.semesterDropdownValue = dropdown.options[dropdown.selectedIndex].value;
         dropdown.parentElement.textContent = dropdown.options[dropdown.selectedIndex].textContent;
         gpaSemesterEditIcon.classList.replace('fa-save', 'fa-edit');
+        setSvgIcon(gpaSemesterEditIcon, 'edit');
         showSelectedSemesterGpa();
       } else { // Editing mode
         const dropdown = semestersDropdown.cloneNode(true);
         dropdown.selectedIndex = window.semesterDropdownIndex;
         gpaSemesterEditIcon.nextElementSibling.replaceChildren(dropdown);
         gpaSemesterEditIcon.classList.replace('fa-edit', 'fa-save');
+        setSvgIcon(gpaSemesterEditIcon, 'save');
       }
     });
     // Modify this event listener for the class grades/credits config so that the dropdowns are all recloned (loop through them, and replace the children of the parent element with the newly created dropdown; dropdown needs to be changed during save)
@@ -2517,6 +2551,7 @@ if (document.title === 'Dashboard') {
         tbody_grade.scope = 'col';
         tbody_grade.textContent = marker === 0 ? `≥ ${grade}` : (marker === grade_lower_bounds.length - 1 ? `< ${[grade_lower_bounds[marker-1]]}` : `${grade_lower_bounds[marker-1]} > % ≥ ${grade}`);
         trash_icon.classList.add('fas', 'fa-trash');
+        setSvgIcon(trash_icon, 'trash');
         trash_button.href = 'javascript:void(0);';
         trash_button.style.color = 'firebrick';
         // Add event listener to the trash can button
@@ -2524,6 +2559,7 @@ if (document.title === 'Dashboard') {
         tbody_trash.style.borderBottom = 0;
         tbody_trash.style.display = 'none';
         add_above_icon.classList.add('fas', 'fa-plus-circle');
+        setSvgIcon(add_above_icon, 'plus-circle');
         add_above_icon.style.backgroundColor = 'white';
         add_above_button.style.color = 'cornflowerblue';
         add_above_button.style.left = '-920%';
@@ -3847,6 +3883,7 @@ if (document.title === 'Dashboard') {
     const minScoreButton = document.createElement('button');
     const minScoreIcon = document.createElement('i');
     minScoreIcon.classList.add('fas', 'fa-calculator');
+    setSvgIcon(minScoreIcon, 'calculator');
     minScoreButton.style.background = 'none';
     minScoreButton.style.border = 'none';
     minScoreButton.style.outline = 'none';
