@@ -1,3 +1,21 @@
+.canvas-grades-pro-icon {
+    display: inline-block;
+    height: 1em;
+    line-height: 1;
+    font-style: normal;
+}
+
+/* Prevent duplicate icons if Font Awesome is loaded */
+.canvas-grades-pro-icon::before {
+    content: none !important;
+}
+
+.canvas-grades-pro-icon > svg {
+    display: inline-block;
+    vertical-align: -.125em;
+    overflow: visible;
+}
+
 .popup-canvas-grades-pro .overlay {
     position: fixed;
     top: 0px;
